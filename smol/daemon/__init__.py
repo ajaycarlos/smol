@@ -1,0 +1,1 @@
+# smol daemon — hold-key listener and overlay summoner

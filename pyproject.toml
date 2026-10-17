@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smol"
+version = "0.1.0"
+description = "Shrink any file to at most a chosen size"
+requires-python = ">=3.12"
+dependencies = [
+    "Pillow>=10.0.0",
+    "pillow-heif>=0.15.0",
+]
+
+[project.scripts]
+smol = "smol.cli:main"
+
+[tool.pytest.pytest_args]
+args = ["--tb=short", "--no-header"]
+
+[tool.ruff]
+extend-select = ["E", "F", "I", "B", "UP"]

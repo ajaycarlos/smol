@@ -1,0 +1,1 @@
+# smol integrations — file-manager right-click scripts, autostart files

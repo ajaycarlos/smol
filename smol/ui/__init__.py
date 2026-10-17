@@ -1,0 +1,1 @@
+# smol UI module — donut, toast, settings (PySide6)
