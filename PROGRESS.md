@@ -47,10 +47,18 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - `Result` dataclass in `smol/core/result.py` with standard fields (`ok`, `output_path`, `original_bytes`, `final_bytes`, `width`, `height`, `quality`, `steps`, `warning`, `error`).
   - `output_path` in `smol/core/paths.py` with non-overwriting collision resolution (`-1`, `-2`).
   - Unit tests in `tests/core/test_basics.py` validating standard sizes, boundary sizes, and hostile filenames (spaces, unicode, leading dash, uppercase extensions, no extension).
-- VERIFY: `uv run pytest -q tests/core/` (11 passed) and `uv run pytest` (64 passed), `uv run ruff check .` clean.
+- Implement smol.core image shrinking foundation (`smol/core/image.py`):
+  - `shrink_image(src, target_bytes, options)` JPEG compression pipeline: decode, EXIF rotation transpose (`ImageOps.exif_transpose`), metadata stripping, sRGB conversion (flattening alpha onto white background).
+  - Handles already <= target files by returning `Result(ok=True)` with warning note without copying or modifying original.
+  - Quality binary search between floor (60) and 95 with `optimize=True`, 4:2:0 subsampling, and baseline encoding.
+  - Clean honest failure if quality floor 60 exceeds target size without downscaling.
+  - Verification on reopening and atomic write via temporary file in target directory.
+  - Comprehensive unit tests in `tests/core/test_image.py` covering portrait and landscape targets (100 KB and 200 KB) landing between 90% and 100% of target, original file integrity, already-small bypass, and atomic write.
+- VERIFY: `uv run pytest -q tests/core/` (18 passed), `uv run pytest` (71 passed), `uv run ruff check .` clean.
 
 ## Next
-- Milestone M1: Implement core image compression engine and `smol shrink` CLI with Pillow and pytest validation on 15+ samples.
+- Milestone M1: Add downscaling ladder (Lanczos resize + quality search 60–90 down to 200 px floor) when quality floor 60 exceeds target.
+
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
