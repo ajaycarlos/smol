@@ -42,7 +42,12 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   gradient+noise), landscape, screenshot PNG, tiny, already-small (~30 KB), grayscale, transparent
   PNG, CMYK, EXIF-rotated (tag 6), WebP photo, and incompressible noise floor. Verified in
   `tests/test_samples.py` with `Pillow` and `pillow-heif` dependencies.
-- VERIFY: `uv run pytest` passes (53 passed), `uv run ruff check .` clean.
+- Implement smol.core foundation utilities:
+  - `parse_size` and `format_size` in `smol/core/size.py` with 1 KB = 1000 bytes decimal sizing, case-insensitivity, whitespace tolerance, and clear error messages.
+  - `Result` dataclass in `smol/core/result.py` with standard fields (`ok`, `output_path`, `original_bytes`, `final_bytes`, `width`, `height`, `quality`, `steps`, `warning`, `error`).
+  - `output_path` in `smol/core/paths.py` with non-overwriting collision resolution (`-1`, `-2`).
+  - Unit tests in `tests/test_core_basics.py` validating standard sizes, boundary sizes, and hostile filenames (spaces, unicode, leading dash, uppercase extensions, no extension).
+- VERIFY: `uv run pytest` passes (64 passed), `uv run ruff check .` clean.
 
 ## Next
 - Milestone M1: Implement core image compression engine and `smol shrink` CLI with Pillow and pytest validation on 15+ samples.
