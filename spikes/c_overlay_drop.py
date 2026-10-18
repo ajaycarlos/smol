@@ -170,10 +170,10 @@ class DropOverlayWindow(QWidget):
 
         files = parse_uri_list(event.mimeData())
         self.last_dropped_files = files
+        event.acceptProposedAction()
+
         if self.on_drop is not None:
             self.on_drop(files)
-
-        event.acceptProposedAction()
 
     def paintEvent(self, event: QPaintEvent) -> None:
         painter = QPainter(self)
@@ -376,7 +376,6 @@ def run_spike_c(
             print(f"  -> {f}")
         controller.record_drop(VariantMode.BEFORE_DRAG, files)
         v1_done = True
-        window.hide()
 
     window.on_drop = on_v1_drop
 
@@ -388,6 +387,9 @@ def run_spike_c(
     while not v1_done and window.isVisible():
         app.processEvents()
         time.sleep(0.01)
+
+    window.hide()
+    app.processEvents()
 
     if not v1_done:
         controller.record_failure(VariantMode.BEFORE_DRAG, "Skipped or closed")
@@ -443,7 +445,6 @@ def run_spike_c(
             print(f"  -> {f}")
         controller.record_drop(VariantMode.DURING_DRAG, files)
         v2_done = True
-        window.close()
 
     window.on_drop = on_v2_drop
 
@@ -459,9 +460,11 @@ def run_spike_c(
             print("\n[Variant 2] Timed out waiting for drop.")
             break
 
+    window.close()
+    app.processEvents()
+
     if not v2_done:
         controller.record_failure(VariantMode.DURING_DRAG, "Timeout waiting for drop")
-        window.close()
 
     # Final summary report
     print("\n" + controller.format_summary())
