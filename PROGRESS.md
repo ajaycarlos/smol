@@ -37,7 +37,12 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   compatibility table, evaluated trigger key collision risks (plain Ctrl avoided due to
   file manager copy behavior), selected Path A (full Filee-like cursor overlay on X11),
   updated `PLAN.md` Section 9 and Milestone M4.
-- VERIFY: `uv run pytest` passes (40 passed), `uv run ruff check .` clean.
+- Implement test sample generation (`tests/make_samples.py`) and on-demand pytest fixture
+  (`samples_dir` in `tests/conftest.py`) generating 11 synthetic test images: portrait (~1.2 MB,
+  gradient+noise), landscape, screenshot PNG, tiny, already-small (~30 KB), grayscale, transparent
+  PNG, CMYK, EXIF-rotated (tag 6), WebP photo, and incompressible noise floor. Verified in
+  `tests/test_samples.py` with `Pillow` and `pillow-heif` dependencies.
+- VERIFY: `uv run pytest` passes (53 passed), `uv run ruff check .` clean.
 
 ## Next
 - Milestone M1: Implement core image compression engine and `smol shrink` CLI with Pillow and pytest validation on 15+ samples.

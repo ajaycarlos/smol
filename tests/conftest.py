@@ -1,6 +1,27 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+from tests.make_samples import (  # noqa: E402
+    DEFAULT_SAMPLES_DIR,
+    GENERATORS,
+    generate_all_samples,
+)
+
+
+@pytest.fixture(scope="session")
+def samples_dir() -> Path:
+    """Fixture that generates test samples on demand into tests/samples/.
+
+    Reuses already generated samples if all expected files are present.
+    """
+    DEFAULT_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    missing = [f for f in GENERATORS if not (DEFAULT_SAMPLES_DIR / f).exists()]
+    if missing:
+        generate_all_samples(DEFAULT_SAMPLES_DIR)
+    return DEFAULT_SAMPLES_DIR

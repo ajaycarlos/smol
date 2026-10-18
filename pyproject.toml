@@ -24,3 +24,9 @@ addopts = "--tb=short --no-header"
 
 [tool.ruff.lint]
 extend-select = ["E", "F", "I", "B", "UP"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
