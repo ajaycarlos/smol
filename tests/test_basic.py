@@ -1,4 +1,5 @@
 import subprocess
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,6 +59,9 @@ def test_cli_doctor_mock_which(
     import smol.cli
 
     monkeypatch.setattr(smol.cli.shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(
+        smol.cli.subprocess, "run", lambda *a, **k: MagicMock(returncode=1)
+    )
     monkeypatch.delenv("XDG_SESSION_TYPE", raising=False)
     monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
 

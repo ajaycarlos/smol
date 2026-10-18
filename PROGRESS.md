@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M0 (Spike A and Spike B complete). Next prompt in PROMPTS.md: P1.3
+M0 (Spike A, Spike B, and Spike C complete).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -27,10 +27,16 @@ M0 (Spike A and Spike B complete). Next prompt in PROMPTS.md: P1.3
   while candidate trigger key is held and read global cursor position in screen coordinates.
   Supports X11 global cursor reading via XQueryPointer and reports architectural
   evidence with screen centre fallback for Wayland. Unit tests in `tests/test_spike_b.py`.
-- VERIFY: `uv run pytest -q` passes (28 passed), `uv run ruff check .` clean.
+- Create Spike C (`spikes/c_overlay_drop.py`): 300×300 translucent, round, frameless,
+  always-on-top drop target window using PySide6. Accepts `text/uri-list` file drops.
+  Evaluates Variant 1 (window visible before drag) and Variant 2 (window appears during
+  active drag on a timer). Verifies instant appearance (<150 ms target met, ~1–3 ms)
+  and non-blocking interaction with the active file manager (`WA_ShowWithoutActivating`).
+  Unit tests in `tests/test_spike_c.py`.
+- VERIFY: `uv run pytest` passes (40 passed), `uv run ruff check .` clean.
 
 ## Next
-- P1.3 — Spike C: overlay drop window under cursor (Milestone 0)
+- Synthesize feasibility spike results in `SPIKE.md` (Path A: X11 full vs Path B: Wayland layer-shell vs Path C: palette fallback) to complete Milestone 0.
 
 ## Decisions
 - (record product decisions here with the date)
