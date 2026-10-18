@@ -7,24 +7,30 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import ExifTags, Image, ImageCms, ImageOps, UnidentifiedImageError
 
 from smol.core.paths import output_path
 from smol.core.result import Result
 from smol.core.size import format_size
 
 
-def _encode_jpeg(img: Image.Image, quality: int) -> bytes:
+def _encode_jpeg(
+    img: Image.Image,
+    quality: int,
+    exif: bytes | Image.Exif | None = None,
+) -> bytes:
     """Encode Pillow image as baseline JPEG with 4:2:0 subsampling and optimization."""
     buf = io.BytesIO()
-    img.save(
-        buf,
-        format="JPEG",
-        quality=quality,
-        optimize=True,
-        subsampling="4:2:0",
-        progressive=False,
-    )
+    kwargs: dict[str, Any] = {
+        "format": "JPEG",
+        "quality": quality,
+        "optimize": True,
+        "subsampling": "4:2:0",
+        "progressive": False,
+    }
+    if exif:
+        kwargs["exif"] = exif
+    img.save(buf, **kwargs)
     return buf.getvalue()
 
 
@@ -37,7 +43,7 @@ def shrink_image(
 
     Pipeline (JPEG):
     1. Decode → apply EXIF rotation → strip metadata → convert to sRGB
-    2. If already <= target: return ok with note, copy nothing
+    2. If already <= target: return ok with note, copy nothing (unless force_reencode)
     4. If quality floor 60 exceeds target: estimate scale = sqrt(target / floor) * 0.98,
        resize with Lanczos, search quality 60-90, repeat with 0.9 steps down to min
        short-side (default 200 px).
@@ -53,11 +59,21 @@ def shrink_image(
     quality_floor = int(opts.get("quality_floor", 60))
     quality_max = int(opts.get("quality_max", 95))
     min_dim = int(opts.get("min_dim", 200))
+    strip_metadata = bool(opts.get("strip_metadata", True))
+    force_reencode = bool(
+        opts.get("force_reencode", False) or opts.get("force", False)
+    )
+    max_pixels = int(
+        opts.get(
+            "max_pixels",
+            getattr(Image, "MAX_IMAGE_PIXELS", 89_478_485) or 89_478_485,
+        )
+    )
 
     original_bytes = src_path.stat().st_size
 
     # Check if already small enough
-    if original_bytes <= target_bytes:
+    if not force_reencode and original_bytes <= target_bytes:
         try:
             with Image.open(src_path) as im:
                 w, h = im.size
@@ -78,15 +94,54 @@ def shrink_image(
         )
 
     # Decode and prepare image
+    output_exif: Image.Exif | None = None
+    old_max_pixels = Image.MAX_IMAGE_PIXELS
     try:
+        Image.MAX_IMAGE_PIXELS = max_pixels
         with Image.open(src_path) as raw_img:
-            # Apply EXIF rotation
+            # Guard against decompression bomb by pixel count
+            total_pixels = raw_img.width * raw_img.height
+            if total_pixels > max_pixels:
+                return Result(
+                    ok=False,
+                    original_bytes=original_bytes,
+                    error=(
+                        f"Image dimensions ({raw_img.width}x{raw_img.height} = "
+                        f"{total_pixels:,} pixels) exceed safety limit of "
+                        f"{max_pixels:,} pixels (decompression bomb protection)."
+                    ),
+                )
+
+            # Metadata handling: preserve if strip_metadata is False
+            if not strip_metadata:
+                raw_exif = raw_img.getexif()
+                if raw_exif:
+                    if ExifTags.Base.Orientation in raw_exif:
+                        raw_exif[ExifTags.Base.Orientation] = 1
+                    try:
+                        output_exif = raw_exif.tobytes()
+                    except (OSError, ValueError, TypeError):
+                        output_exif = None
+
+            # Apply EXIF rotation (bakes rotation into pixels)
             img = ImageOps.exif_transpose(raw_img)
             if img is None:
                 img = raw_img.copy()
 
-            # Strip metadata & convert to sRGB
-            # Flatten alpha onto white if transparent
+            # Convert ICC profile to sRGB
+            icc_profile = raw_img.info.get("icc_profile")
+            if icc_profile:
+                try:
+                    in_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+                    srgb_profile = ImageCms.createProfile("sRGB")
+                    target_mode = "RGBA" if img.mode in ("RGBA", "LA") else "RGB"
+                    img = ImageCms.profileToProfile(
+                        img, in_profile, srgb_profile, outputMode=target_mode
+                    )
+                except (ImageCms.PyCMSError, OSError, ValueError):
+                    pass
+
+            # Flatten alpha onto white if transparent, convert to sRGB
             has_alpha = img.mode in ("RGBA", "LA") or (
                 img.mode == "P" and "transparency" in img.info
             )
@@ -96,17 +151,26 @@ def shrink_image(
                 white_bg.paste(rgba, mask=rgba.split()[3])
                 img = white_bg
             elif img.mode != "RGB":
+                # Convert CMYK, grayscale (L, 1), and other modes to RGB (sRGB)
                 img = img.convert("RGB")
             else:
                 img = img.copy()
 
             img.info = {}
+    except Image.DecompressionBombError as exc:
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=f"Decompression bomb protection triggered: {exc}",
+        )
     except (OSError, ValueError, UnidentifiedImageError) as exc:
         return Result(
             ok=False,
             original_bytes=original_bytes,
             error=f"Failed to open or decode image: {exc}",
         )
+    finally:
+        Image.MAX_IMAGE_PIXELS = old_max_pixels
 
     width, height = img.size
     steps = 0
@@ -114,7 +178,7 @@ def shrink_image(
     def encode_jpeg(im: Image.Image, q: int) -> bytes:
         nonlocal steps
         steps += 1
-        return _encode_jpeg(im, q)
+        return _encode_jpeg(im, q, exif=output_exif)
 
     resampling = getattr(Image, "Resampling", Image).LANCZOS
 

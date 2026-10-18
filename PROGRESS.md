@@ -60,7 +60,15 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - Honest failure reporting when target is unreachable at minimum dimension floor (`"Smallest I can make this is ~... at 200 px; try a larger target."`) preserving original file and creating no partial files.
   - Extended `Result` dataclass in `smol/core/result.py` with `scale: float | None` recording downscale ratio along with `quality` and `steps` (total encode attempt count).
   - Unit tests in `tests/core/test_image.py` verifying downscaling success (portrait to 100 KB landing >= 90%), incompressible noise floor honest failure (`noise_cannot_shrink.jpg` targeting 5 KB), and custom `min_dim` constraints.
-- VERIFY: `uv run pytest -q tests/core/` (20 passed), `uv run pytest` (73 passed), `uv run ruff check .` clean.
+- Handle format edge cases, metadata stripping, and decompression bomb guard in `shrink_image`:
+  - Strip GPS and camera EXIF metadata by default, with option to preserve (`options={"strip_metadata": False}`).
+  - Bake EXIF rotation into pixels via `ImageOps.exif_transpose`, resetting orientation tag to 1 if metadata is preserved to prevent double-rotation.
+  - Convert CMYK and other color modes to sRGB cleanly.
+  - Convert embedded ICC profiles to standard sRGB via `ImageCms.profileToProfile`.
+  - Flatten PNG transparency (RGBA, LA, palette transparency) onto solid white for JPEG output.
+  - Guard against decompression bombs by checking pixel limits (`max_pixels` option) and catching `Image.DecompressionBombError` with clear error messages.
+  - Add comprehensive unit tests in `tests/core/test_image.py` asserting no GPS tags, swapped dimensions for rotated samples, white background for transparent PNGs, sRGB output for CMYK/grayscale, and decompression bomb error handling.
+- VERIFY: `uv run pytest` (80 passed), `uv run ruff check .` clean.
 
 ## Next
 - Milestone M1: Add format handling for WebP (quality search) and PNG (palette quantisation 256 -> 128 -> 64 colours, then downscale).
