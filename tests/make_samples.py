@@ -20,7 +20,10 @@ from __future__ import annotations
 import random
 from pathlib import Path
 
+import pillow_heif
 from PIL import Image, ImageDraw
+
+pillow_heif.register_heif_opener()
 
 DEFAULT_SAMPLES_DIR = Path(__file__).resolve().parent / "samples"
 
@@ -36,6 +39,8 @@ SAMPLE_FILES = {
     "exif_rotated": "exif_rotated.jpg",
     "photo_webp": "photo.webp",
     "noise_cannot_shrink": "noise_cannot_shrink.jpg",
+    "sample_heic": "sample.heic",
+    "sample_avif": "sample.avif",
 }
 
 
@@ -68,8 +73,9 @@ def make_landscape_jpeg(path: Path) -> None:
 
 
 def make_screenshot_png(path: Path) -> None:
-    """Screenshot-like PNG (flat colours and text)."""
-    w, h = 800, 600
+    """Screenshot-like PNG (window, controls, and realistic preview content)."""
+    random.seed(106)
+    w, h = 1000, 750
     img = Image.new("RGB", (w, h), color=(245, 245, 247))
     draw = ImageDraw.Draw(img)
 
@@ -81,7 +87,7 @@ def make_screenshot_png(path: Path) -> None:
     draw.text((80, 13), "smol - Desktop File Compressor", fill=(220, 220, 220))
 
     # Sidebar
-    draw.rectangle([(0, 40), (200, h)], fill=(230, 233, 238))
+    draw.rectangle([(0, 40), (220, h)], fill=(230, 233, 238))
     draw.text((20, 60), "Navigation", fill=(80, 80, 80))
     draw.text((20, 90), "• Dashboard", fill=(30, 30, 30))
     draw.text((20, 120), "• Settings", fill=(100, 100, 100))
@@ -89,21 +95,31 @@ def make_screenshot_png(path: Path) -> None:
 
     # Main content panels
     draw.rectangle(
-        [(220, 60), (780, 200)],
+        [(240, 50), (980, 140)],
         fill=(255, 255, 255),
         outline=(210, 215, 220),
         width=1,
     )
-    draw.text((240, 80), "Drop files here to compress", fill=(50, 50, 50))
+    draw.text((260, 65), "Drop files here to compress", fill=(50, 50, 50))
     draw.text(
-        (240, 110),
+        (260, 95),
         "Target: <= 100 KB  |  Format: Keep original",
         fill=(120, 120, 120),
     )
 
-    # Action button
-    draw.rectangle([(240, 145), (360, 180)], fill=(0, 122, 255))
-    draw.text((265, 155), "Select File", fill=(255, 255, 255))
+    # Preview card with gradient + noise texture (realistic ~500-700 KB)
+    card_w, card_h = 700, 520
+    card = Image.new("RGB", (card_w, card_h))
+    cdraw = ImageDraw.Draw(card)
+    for y in range(card_h):
+        cdraw.line(
+            [(0, y), (card_w, y)],
+            fill=(int(200 * y / card_h), 120, 255 - int(200 * y / card_h)),
+        )
+    noise_bytes = random.randbytes(card_w * card_h * 3)
+    noise = Image.frombytes("RGB", (card_w, card_h), noise_bytes)
+    card_blended = Image.blend(card, noise, 0.16)
+    img.paste(card_blended, (250, 160))
 
     img.save(path, format="PNG")
 
@@ -180,14 +196,43 @@ def make_exif_rotated_jpeg(path: Path) -> None:
 
 
 def make_webp_photo(path: Path) -> None:
-    """WebP format photo."""
+    """WebP format photo (~250-400 KB with gradients and texture)."""
     random.seed(104)
-    w, h = 800, 600
-    img = Image.new("RGB", (w, h), color=(100, 140, 180))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse([(100, 50), (700, 550)], fill=(220, 160, 100))
-    draw.rectangle([(200, 250), (600, 500)], fill=(60, 120, 80))
-    img.save(path, format="WEBP", quality=80)
+    w, h = 1000, 800
+    base = Image.new("RGB", (w, h), color=(100, 140, 180))
+    draw = ImageDraw.Draw(base)
+    for y in range(h):
+        draw.line(
+            [(0, y), (w, y)],
+            fill=(int(180 * y / h), int(120 * (1 - y / h)), 150),
+        )
+    noise = Image.frombytes("RGB", (w, h), random.randbytes(w * h * 3))
+    blended = Image.blend(base, noise, 0.25)
+    blended.save(path, format="WEBP", quality=90)
+
+
+def make_heic_photo(path: Path) -> None:
+    """HEIC format photo (~60-100 KB)."""
+    random.seed(107)
+    w, h = 600, 400
+    im = Image.new("RGB", (w, h), (120, 180, 240))
+    d = ImageDraw.Draw(im)
+    d.rectangle([(50, 50), (550, 350)], fill=(200, 100, 50))
+    noise = Image.frombytes("RGB", (w, h), random.randbytes(w * h * 3))
+    blended = Image.blend(im, noise, 0.15)
+    blended.save(path, format="HEIF")
+
+
+def make_avif_photo(path: Path) -> None:
+    """AVIF format photo (~60-100 KB)."""
+    random.seed(108)
+    w, h = 600, 400
+    im = Image.new("RGB", (w, h), (120, 180, 240))
+    d = ImageDraw.Draw(im)
+    d.rectangle([(50, 50), (550, 350)], fill=(200, 100, 50))
+    noise = Image.frombytes("RGB", (w, h), random.randbytes(w * h * 3))
+    blended = Image.blend(im, noise, 0.15)
+    blended.save(path, format="AVIF")
 
 
 def make_noise_cannot_shrink(path: Path) -> None:
@@ -214,6 +259,8 @@ GENERATORS = {
     "exif_rotated.jpg": make_exif_rotated_jpeg,
     "photo.webp": make_webp_photo,
     "noise_cannot_shrink.jpg": make_noise_cannot_shrink,
+    "sample.heic": make_heic_photo,
+    "sample.avif": make_avif_photo,
 }
 
 

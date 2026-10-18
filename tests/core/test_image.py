@@ -338,8 +338,8 @@ def test_shrink_image_png_transparency_flattened_onto_white(
         # Pixel (0,0) is transparent (alpha = 0)
         assert raw_im.getpixel((0, 0))[3] == 0
 
-    # Shrink compressible RGBA PNG to JPEG target
-    result = shrink_image(src_file, target_bytes=80_000)
+    # Shrink compressible RGBA PNG to JPEG target (keep_format=False)
+    result = shrink_image(src_file, target_bytes=80_000, options={"keep_format": False})
     assert result.ok is True
     assert result.output_path is not None
 
@@ -350,11 +350,14 @@ def test_shrink_image_png_transparency_flattened_onto_white(
         pixel_0_0 = out_img.getpixel((0, 0))
         assert pixel_0_0[0] > 240 and pixel_0_0[1] > 240 and pixel_0_0[2] > 240
 
-    # Also test force_reencode on samples_dir / transparent.png
+    # Also test force_reencode on samples_dir / transparent.png to JPEG
+    # with keep_format=False
     sample_copy = tmp_path / "sample_transparent.png"
     sample_copy.write_bytes((samples_dir / "transparent.png").read_bytes())
     res_sample = shrink_image(
-        sample_copy, target_bytes=10_000, options={"force_reencode": True}
+        sample_copy,
+        target_bytes=10_000,
+        options={"force_reencode": True, "keep_format": False},
     )
     assert res_sample.ok is True
     assert res_sample.output_path is not None
@@ -399,4 +402,166 @@ def test_shrink_image_decompression_bomb_guard(tmp_path: Path) -> None:
     assert result.output_path is None
     assert result.error is not None
     assert "decompression bomb" in result.error.lower()
+
+
+def test_shrink_image_webp_format_kept_and_searched(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "photo.webp"
+    src_copy = tmp_path / "test.webp"
+    src_copy.write_bytes(src_sample.read_bytes())
+    orig_bytes = src_copy.stat().st_size
+    assert orig_bytes > 100_000
+
+    target_bytes = 100_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.exists()
+    assert result.output_path.suffix == ".webp"
+    assert result.final_bytes <= target_bytes
+    assert result.final_bytes >= int(0.90 * target_bytes)
+    assert result.quality is not None
+    assert 60 <= result.quality <= 95
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "WEBP"
+        assert out_img.size == (result.width, result.height)
+
+
+def test_shrink_image_png_quantization_and_downscale(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "screenshot.png"
+    src_copy = tmp_path / "screen_test.png"
+    src_copy.write_bytes(src_sample.read_bytes())
+
+    target_bytes = 100_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.exists()
+    assert result.output_path.suffix == ".png"
+    assert result.final_bytes <= target_bytes
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "PNG"
+        assert out_img.size == (result.width, result.height)
+
+
+def test_shrink_image_png_impossible_fails_when_allow_convert_false(
+    tmp_path: Path,
+) -> None:
+    # High-entropy 250x250 random noise PNG cannot compress below 10 KB at 200px floor
+    random.seed(111)
+    w, h = 250, 250
+    noise_data = random.randbytes(w * h * 3)
+    noise_img = Image.frombytes("RGB", (w, h), noise_data)
+    src_file = tmp_path / "incompressible.png"
+    noise_img.save(src_file, format="PNG")
+
+    target_bytes = 3_000
+    result = shrink_image(
+        src_file,
+        target_bytes=target_bytes,
+        options={"allow_convert": False, "min_dim": 200},
+    )
+
+    assert result.ok is False
+    assert result.output_path is None
+    assert result.error is not None
+    error_msg = result.error.lower()
+    assert "allow_convert" in error_msg
+    assert "smallest" in error_msg
+
+
+def test_shrink_image_png_impossible_converts_to_jpeg_when_allow_convert_true(
+    tmp_path: Path,
+) -> None:
+    # High-entropy noise PNG that cannot fit in PNG at 20 KB, but JPEG can compress it
+    random.seed(112)
+    w, h = 250, 250
+    noise_data = random.randbytes(w * h * 3)
+    noise_img = Image.frombytes("RGB", (w, h), noise_data)
+    src_file = tmp_path / "incompressible_convert.png"
+    noise_img.save(src_file, format="PNG")
+
+    target_bytes = 20_000
+    result = shrink_image(
+        src_file,
+        target_bytes=target_bytes,
+        options={"allow_convert": True, "min_dim": 200},
+    )
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.suffix in (".jpg", ".jpeg")
+    assert result.final_bytes <= target_bytes
+    assert result.warning is not None
+    warning_msg = result.warning.lower()
+    assert "converted" in warning_msg or "jpeg" in warning_msg
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "JPEG"
+
+
+def test_shrink_image_heic_to_jpeg(samples_dir: Path, tmp_path: Path) -> None:
+    src_sample = samples_dir / "sample.heic"
+    src_copy = tmp_path / "input.heic"
+    src_copy.write_bytes(src_sample.read_bytes())
+
+    target_bytes = 40_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.suffix in (".jpg", ".jpeg")
+    assert result.final_bytes <= target_bytes
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "JPEG"
+
+
+def test_shrink_image_avif_to_jpeg(samples_dir: Path, tmp_path: Path) -> None:
+    src_sample = samples_dir / "sample.avif"
+    src_copy = tmp_path / "input.avif"
+    src_copy.write_bytes(src_sample.read_bytes())
+
+    target_bytes = 40_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.suffix in (".jpg", ".jpeg")
+    assert result.final_bytes <= target_bytes
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "JPEG"
+
+
+def test_shrink_image_screenshot_png_reaches_100kb(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "screenshot.png"
+    src_copy = tmp_path / "screenshot.png"
+    src_copy.write_bytes(src_sample.read_bytes())
+    assert src_copy.stat().st_size > 100_000
+
+    target_bytes = 100_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.suffix == ".png"
+    assert result.final_bytes <= target_bytes
+    min_acceptable = int(0.90 * target_bytes)
+    assert result.final_bytes >= min_acceptable, (
+        f"Expected {result.final_bytes} >= {min_acceptable} bytes"
+    )
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "PNG"
+
 

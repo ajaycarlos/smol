@@ -3,7 +3,9 @@ from pathlib import Path
 from smol.core.size import format_size, parse_size
 
 
-def output_path(src: str | Path, target_bytes: int | str) -> Path:
+def output_path(
+    src: str | Path, target_bytes: int | str, ext: str | None = None
+) -> Path:
     """Generate a destination output path next to the source file.
 
     Pattern: `<name>_<size>.<ext>`
@@ -19,7 +21,10 @@ def output_path(src: str | Path, target_bytes: int | str) -> Path:
     size_label = format_size(size_bytes)
     parent = src_path.parent
     stem = src_path.stem
-    suffix = src_path.suffix
+    if ext is not None:
+        suffix = ext if ext.startswith(".") else f".{ext}"
+    else:
+        suffix = src_path.suffix
 
     candidate = parent / f"{stem}_{size_label}{suffix}"
     if not candidate.exists():

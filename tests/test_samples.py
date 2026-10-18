@@ -7,7 +7,7 @@ from tests.make_samples import GENERATORS, SAMPLE_FILES, generate_all_samples
 
 def test_sample_generation_and_inventory(samples_dir: Path):
     """Test that all required sample files are generated and exist."""
-    assert len(GENERATORS) == 11
+    assert len(GENERATORS) == 13
     for filename in GENERATORS:
         sample_path = samples_dir / filename
         assert sample_path.exists(), f"Missing expected sample file: {filename}"
@@ -126,3 +126,25 @@ def test_incompressible_noise(samples_dir: Path):
     )
     with Image.open(path) as img:
         assert img.size[0] > 0 and img.size[1] > 0
+
+
+def test_heic_photo(samples_dir: Path):
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    path = samples_dir / "sample.heic"
+    assert path.exists()
+    assert path.stat().st_size > 0
+    with Image.open(path) as img:
+        assert img.format == "HEIF"
+        assert img.size == (600, 400)
+
+
+def test_avif_photo(samples_dir: Path):
+    path = samples_dir / "sample.avif"
+    assert path.exists()
+    assert path.stat().st_size > 0
+    with Image.open(path) as img:
+        assert img.format == "AVIF"
+        assert img.size == (600, 400)
+

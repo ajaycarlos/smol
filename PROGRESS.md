@@ -68,10 +68,18 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - Flatten PNG transparency (RGBA, LA, palette transparency) onto solid white for JPEG output.
   - Guard against decompression bombs by checking pixel limits (`max_pixels` option) and catching `Image.DecompressionBombError` with clear error messages.
   - Add comprehensive unit tests in `tests/core/test_image.py` asserting no GPS tags, swapped dimensions for rotated samples, white background for transparent PNGs, sRGB output for CMYK/grayscale, and decompression bomb error handling.
-- VERIFY: `uv run pytest` (80 passed), `uv run ruff check .` clean.
+- Add format-specific handlers in smol.core (smol/core/image.py):
+  - WebP quality search and Lanczos downscale matching JPEG behavior while keeping .webp format.
+  - PNG palette quantisation ladder (256→128→64 colours) and downscaling with scale refinement, keeping .png format by default.
+  - PNG fallback to JPEG with a warning when target is unreachable within constraints and allow_convert=True; honest failure suggesting allow_convert when False.
+  - Auto-conversion of HEIC and AVIF inputs to JPEG output (.jpg).
+  - Registered pillow_heif opener for HEIF/AVIF decoding support in Pillow.
+  - Supported optional target extension override in smol/core/paths.py output_path.
+  - Added sample.heic, sample.avif, and realistic screenshot.png (~855 KB) to tests/make_samples.py and updated tests/test_samples.py.
+- VERIFY: PNG screenshot sample reaches 100 KB without changing format (98,733 bytes, 98.7% of target). uv run pytest (89 passed), uv run ruff check . clean.
 
 ## Next
-- Milestone M1: Add format handling for WebP (quality search) and PNG (palette quantisation 256 -> 128 -> 64 colours, then downscale).
+- Milestone M1: Implement smol shrink CLI subcommand with options (--max, --json, --dry-run, --keep-format/--allow-convert).
 
 
 ## Decisions
