@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M2 — Right-click integration + notifications (Complete).
+M3 — Donut UI, standalone (In Progress).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -108,9 +108,17 @@ M2 — Right-click integration + notifications (Complete).
   - Synchronized package and CLI versions to 0.2.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
   - Added comprehensive `README.md` with "Try it" section covering installation with uv/venv, file manager right-click integration (`smol integrate install/uninstall`), and CLI usage examples (`smol shrink`).
   - VERIFY: `smol --version` outputs `smol 0.2.0`; `uv run pytest` (122 passed); `uv run ruff check .` clean. Tagged `v0.2.0`.
+- Implement pure-math donut geometry foundation (smol/ui/donut_geometry.py):
+  - Created DonutGeometry and SegmentGeometry dataclass with zero Qt dependencies.
+  - Segment angular spans: first segment starts at top (0°), proceeding clockwise with configurable gap angles.
+  - Hit testing via segment_at(dx, dy): returns segment index or None for center hole (r < r_in), outside (r > r_out), or inter-segment gap angles.
+  - Label anchor point calculations: (x, y) coordinates placed at segment midpoint angle at radius (r_in + r_out) / 2.
+  - Input parameter validation for N >= 1, r_in > 0, r_out > r_in, gap_angle < 360/N.
+  - Comprehensive unit test suite in tests/ui/test_donut_geometry.py covering N from 1 to 12, radial/angular boundaries, gaps, center, and outside hits.
+  - VERIFY: 45 new tests passed (167 total test suite passing in ~10s); ruff check clean.
 
 ## Next
-- Milestone M3: Donut UI, standalone (`smol donut --files a.jpg b.jpg` with PySide6 overlay at cursor, hover, prediction, drop, custom size, Esc cancel).
+- Milestone M3: Static donut window (`smol donut --files FILE...` with PySide6 overlay at cursor, painted with QPainter using donut_geometry).
 
 
 ## Decisions
