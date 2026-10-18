@@ -117,8 +117,19 @@ M3 — Donut UI, standalone (In Progress).
   - Comprehensive unit test suite in tests/ui/test_donut_geometry.py covering N from 1 to 12, radial/angular boundaries, gaps, center, and outside hits.
   - VERIFY: 45 new tests passed (167 total test suite passing in ~10s); ruff check clean.
 
+- Implement `smol donut --files FILE...` overlay window (smol/ui/donut_window.py, smol/cli.py):
+  - Frameless, translucent (`WA_TranslucentBackground`), always-on-top (`WindowStaysOnTopHint`), tool overlay window centred on cursor with screen boundary clamping.
+  - Painted with QPainter using `donut_geometry` with 8 segments: 20 KB, 50 KB, 100 KB, 200 KB, 500 KB, 1 MB, 2 MB, Custom…
+  - Segments larger than the input file are dimmed and unclickable; Custom… remains active.
+  - Centre circular card displays file thumbnail (loaded via Pillow or Qt), filename (elided middle), and formatted current size.
+  - Dark glass styling readable on any wallpaper with hover brightening and subtle glowing borders.
+  - Dismissal on Esc key press or clicking outside the outer donut ring.
+  - Segment click prints chosen size to stdout and cleanly exits.
+  - Comprehensive unit and CLI test suite in `tests/ui/test_donut_window.py` and `tests/test_cli_donut.py` (16 tests).
+  - VERIFY: `uv run smol donut --help` displays usage; all 183 tests pass in ~11s; `uv run ruff check` clean.
+
 ## Next
-- Milestone M3: Static donut window (`smol donut --files FILE...` with PySide6 overlay at cursor, painted with QPainter using donut_geometry).
+- Milestone M3: Wire donut hover predictions, custom size input popup, and engine invocation on drop/click.
 
 
 ## Decisions

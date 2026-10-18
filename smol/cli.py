@@ -345,6 +345,51 @@ def integrate(argv: list[str]) -> int:
     return 0
 
 
+def donut(argv: list[str]) -> int:
+    """Handle `smol donut --files FILE...` subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="smol donut",
+        description="Open the donut size menu at the cursor",
+    )
+    parser.add_argument(
+        "--files",
+        nargs="+",
+        required=True,
+        metavar="FILE",
+        help="One or more files to shrink",
+    )
+
+    if "--help" in argv or "-h" in argv:
+        parser.print_help()
+        return 0
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    paths = [Path(f) for f in args.files]
+    for p in paths:
+        if not p.exists():
+            print(f"Error: File not found: {p}", file=sys.stderr)
+            return 1
+
+    from PySide6.QtWidgets import QApplication
+
+    from smol.ui.donut_window import DonutWindow
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    def on_select(label: str) -> None:
+        print(label, flush=True)
+
+    window = DonutWindow(files=paths, on_select=on_select)
+    window.run_overlay()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -375,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
         return shrink(argv[1:])
     if argv[0] == "integrate":
         return integrate(argv[1:])
+    if argv[0] == "donut":
+        return donut(argv[1:])
 
     # Handle unknown commands gracefully
     if argv and argv[0] not in ("shrink", "donut", "daemon", "integrate", "doctor"):
