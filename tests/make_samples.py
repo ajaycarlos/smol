@@ -41,6 +41,7 @@ SAMPLE_FILES = {
     "noise_cannot_shrink": "noise_cannot_shrink.jpg",
     "sample_heic": "sample.heic",
     "sample_avif": "sample.avif",
+    "forty_mp": "forty_mp.jpg",
 }
 
 
@@ -247,6 +248,18 @@ def make_noise_cannot_shrink(path: Path) -> None:
     img.save(path, format="JPEG", quality=85)
 
 
+def make_forty_mp_jpeg(path: Path) -> None:
+    """40 MP JPEG image (7300x5500 = 40.15 MP) for testing large photos."""
+    w, h = 7300, 5500
+    img = Image.new("RGB", (w, h), color=(100, 150, 200))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle(
+        [(500, 500), (6800, 5000)], fill=(120, 170, 220), outline=(80, 120, 160)
+    )
+    draw.ellipse([(2000, 1500), (5300, 4000)], fill=(200, 180, 140))
+    img.save(path, format="JPEG", quality=80)
+
+
 GENERATORS = {
     "portrait.jpg": make_portrait_jpeg,
     "landscape.jpg": make_landscape_jpeg,
@@ -261,6 +274,7 @@ GENERATORS = {
     "noise_cannot_shrink.jpg": make_noise_cannot_shrink,
     "sample.heic": make_heic_photo,
     "sample.avif": make_avif_photo,
+    "forty_mp.jpg": make_forty_mp_jpeg,
 }
 
 

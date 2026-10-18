@@ -82,7 +82,13 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - Handled exit codes: 0 for all ok, 1 for failures (impossible targets, missing/unreadable files), 2 for bad usage.
   - Added optional `out_dir` support in `smol/core/paths.py` and `dry_run` + `out_dir` handling in `smol/core/image.py`.
   - Added comprehensive test suite in `tests/test_cli_shrink.py` (12 tests) verifying argument validation, JSON schema, dry-run safety, honest impossible target reporting, options forwarding, and batch processing.
-- VERIFY: `uv run smol shrink tests/samples/portrait.jpg --max 100KB` produces a file ≤ 100 KB; `--dry-run` predicts without writing; `--json` outputs valid JSON; `uv run pytest` (101 passed), `uv run ruff check .` clean.
+- Engine review & promise verification (v0.1.0-engine):
+  - Fixed High severity gap: added post-write disk size verification in `shrink_image` ensuring `final_bytes <= target_bytes` and reopening verification directly from disk; unlinks file and returns honest failure if violated.
+  - Fixed Medium severity gap: implemented lossy scale refinement for JPEG and WebP when downscaled resolution fits at `quality_floor` and max downscaled quality undershoots target; refines scale upward to maximize pixel resolution and reliably land in the 92–99% target window.
+  - Fixed Medium severity gap: guarded `min_dim` to be at least 1 pixel in `shrink_image` to prevent zero-dimension crashes when non-positive limits are passed.
+  - Added 40 MP test sample (`forty_mp.jpg`, 7300×5500) to `tests/make_samples.py` and test suite, completing the 15+ sample coverage specified in PLAN.md M1.
+  - Added comprehensive unit tests in `tests/core/test_image.py` verifying 40 MP shrinking, lossy scale refinement hitting 92–99%, `min_dim` boundary protection, and post-write size check failure handling.
+- VERIFY: `uv run smol shrink tests/samples/portrait.jpg --max 100KB` produces 99.51 KB file (470×627 q85); `uv run smol shrink tests/samples/forty_mp.jpg --max 100KB` produces 98.59 KB file (3931×2962 q89); `uv run pytest` (106 passed in 11.15s); `uv run ruff check .` clean. Tagged `v0.1.0-engine`.
 
 ## Next
 - Milestone M2: Right-click integration + notifications (file manager right-click action + desktop notification).
@@ -91,6 +97,10 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
 - 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
+- 2026-10-18: Enforce post-write disk verification in core engine to guarantee no output file can ever be written or returned as successful above target_bytes.
 
-## Known issues
-- (none yet)
+## Known limits (v0.1.0-engine)
+- Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
+- Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
+- PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
+- Decompression bomb threshold: images exceeding 89.5 million pixels are safely rejected to protect system memory.

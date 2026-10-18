@@ -184,6 +184,39 @@ def _lossy_quality_search_and_downscale(
         # Fits at quality floor: search quality in [quality_floor, min(quality_max, 90)]
         downscale_q_max = min(quality_max, 90)
         max_data = encode(resized_img, downscale_q_max)
+
+        # If even at max downscaled quality the file is smaller than target,
+        # the scale was reduced further than necessary. Refine scale upward
+        # so resolution is maximized and output lands in the 92-99% target window.
+        if len(max_data) <= target_bytes and current_scale < 1.0:
+            low_scale = current_scale
+            high_scale = min(
+                1.0, current_scale * math.sqrt(target_bytes / len(floor_data))
+            )
+            best_res = resized_img
+            best_w, best_h = cur_w, cur_h
+            best_floor = floor_data
+
+            if high_scale > low_scale * 1.03:
+                for _ in range(4):
+                    mid_scale = (low_scale + high_scale) / 2
+                    mw = min(orig_w, max(min_dim_eff, round(orig_w * mid_scale)))
+                    mh = min(orig_h, max(min_dim_eff, round(orig_h * mid_scale)))
+                    m_img = img.resize((mw, mh), resampling)
+                    m_f = encode(m_img, quality_floor)
+                    if len(m_f) <= target_bytes:
+                        low_scale = mid_scale
+                        best_res = m_img
+                        best_w, best_h = mw, mh
+                        best_floor = m_f
+                    else:
+                        high_scale = mid_scale
+
+            resized_img = best_res
+            cur_w, cur_h = best_w, best_h
+            floor_data = best_floor
+            max_data = encode(resized_img, downscale_q_max)
+
         if len(max_data) <= target_bytes:
             best_q = downscale_q_max
             best_data = max_data
@@ -237,7 +270,7 @@ def shrink_image(
     opts = options or {}
     quality_floor = int(opts.get("quality_floor", 60))
     quality_max = int(opts.get("quality_max", 95))
-    min_dim = int(opts.get("min_dim", 200))
+    min_dim = max(1, int(opts.get("min_dim", 200)))
     strip_metadata = bool(opts.get("strip_metadata", True))
     keep_format = bool(opts.get("keep_format", True))
     allow_convert = bool(opts.get("allow_convert", False))
@@ -574,6 +607,17 @@ def shrink_image(
 
     assert best_data is not None
 
+    # Verify in-memory data <= target_bytes
+    if len(best_data) > target_bytes:
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=(
+                f"Encoded output size ({len(best_data)} bytes) exceeds target "
+                f"({target_bytes} bytes)."
+            ),
+        )
+
     # Verify output by reopening
     try:
         with Image.open(io.BytesIO(best_data)) as check_im:
@@ -649,6 +693,29 @@ def shrink_image(
         )
 
     final_bytes = dest_path.stat().st_size
+    if final_bytes > target_bytes:
+        dest_path.unlink(missing_ok=True)
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=(
+                f"Output file size ({final_bytes} bytes) exceeds target "
+                f"({target_bytes} bytes)."
+            ),
+        )
+
+    # Verify written output directly from disk
+    try:
+        with Image.open(dest_path) as disk_im:
+            disk_im.verify()
+    except (OSError, ValueError) as exc:
+        dest_path.unlink(missing_ok=True)
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=f"Verification failed on reopening saved file: {exc}",
+        )
+
     return Result(
         ok=True,
         output_path=dest_path,

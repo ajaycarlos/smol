@@ -565,3 +565,108 @@ def test_shrink_image_screenshot_png_reaches_100kb(
         assert out_img.format == "PNG"
 
 
+def test_shrink_image_forty_mp_reaches_100kb(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "forty_mp.jpg"
+    src_copy = tmp_path / "forty_mp.jpg"
+    src_copy.write_bytes(src_sample.read_bytes())
+    assert src_copy.stat().st_size > 500_000
+
+    target_bytes = 100_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.exists()
+    assert result.output_path.suffix in (".jpg", ".jpeg")
+    assert result.final_bytes <= target_bytes
+    assert result.final_bytes >= int(0.90 * target_bytes), (
+        f"Expected {result.final_bytes} >= {int(0.90 * target_bytes)}"
+    )
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "JPEG"
+        assert out_img.size == (result.width, result.height)
+
+
+def test_shrink_image_lossy_scale_refinement_lands_above_90pct(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "portrait.jpg"
+    src_copy = tmp_path / "portrait.jpg"
+    src_copy.write_bytes(src_sample.read_bytes())
+
+    target_bytes = 20_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.exists()
+    assert result.final_bytes <= target_bytes
+    # Must land >= 90% (Promise 1: aim 92-99%)
+    assert result.final_bytes >= int(0.90 * target_bytes), (
+        f"Expected {result.final_bytes} >= 18000, got {result.final_bytes}"
+    )
+    # Refinement must preserve higher dimensions than unrefined 210x280
+    assert result.width is not None and result.width > 210
+
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "JPEG"
+
+
+def test_shrink_image_min_dim_guard_prevents_zero_dim(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "tiny.jpg"
+    src_copy = tmp_path / "tiny.jpg"
+    src_copy.write_bytes(src_sample.read_bytes())
+
+    # Passing min_dim <= 0 should be guarded to max(1, min_dim)
+    result = shrink_image(
+        src_copy,
+        target_bytes=500,
+        options={"min_dim": 0, "force_reencode": True},
+    )
+    assert result.width is not None and result.width >= 1
+    assert result.height is not None and result.height >= 1
+    if result.ok and result.output_path:
+        assert result.output_path.exists()
+        with Image.open(result.output_path) as im:
+            assert im.size[0] >= 1 and im.size[1] >= 1
+
+
+def test_shrink_image_post_write_size_verification_guard(
+    samples_dir: Path, tmp_path: Path, monkeypatch
+) -> None:
+    src_sample = samples_dir / "landscape.jpg"
+    src_copy = tmp_path / "landscape.jpg"
+    src_copy.write_bytes(src_sample.read_bytes())
+
+    import tempfile
+
+    orig_named_temp = tempfile.NamedTemporaryFile
+
+    def fake_named_temp(*args, **kwargs):
+        temp_obj = orig_named_temp(*args, **kwargs)
+        orig_write = temp_obj.write
+
+        def expanding_write(data: bytes):
+            # Inject extra bytes to violate target_bytes on disk
+            return orig_write(data + b"\x00" * 50_000)
+
+        temp_obj.write = expanding_write
+        return temp_obj
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", fake_named_temp)
+
+    target_bytes = 20_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+    # Should detect final_bytes > target_bytes, delete the file, and return ok=False
+    assert result.ok is False
+    assert result.error is not None
+    assert "exceeds target" in result.error.lower()
+    if result.output_path is not None:
+        assert not result.output_path.exists()
+
+

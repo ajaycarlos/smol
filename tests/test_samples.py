@@ -7,7 +7,7 @@ from tests.make_samples import GENERATORS, SAMPLE_FILES, generate_all_samples
 
 def test_sample_generation_and_inventory(samples_dir: Path):
     """Test that all required sample files are generated and exist."""
-    assert len(GENERATORS) == 13
+    assert len(GENERATORS) == 14
     for filename in GENERATORS:
         sample_path = samples_dir / filename
         assert sample_path.exists(), f"Missing expected sample file: {filename}"
@@ -147,4 +147,13 @@ def test_avif_photo(samples_dir: Path):
     with Image.open(path) as img:
         assert img.format == "AVIF"
         assert img.size == (600, 400)
+
+
+def test_forty_mp_jpeg(samples_dir: Path):
+    path = samples_dir / "forty_mp.jpg"
+    assert path.exists()
+    with Image.open(path) as img:
+        assert img.format == "JPEG"
+        assert img.size == (7300, 5500)
+        assert img.size[0] * img.size[1] > 40_000_000
 
