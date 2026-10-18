@@ -207,23 +207,66 @@ def test_cli_integrate_commands(capsys, monkeypatch, tmp_path: Path):
 
 
 def test_shrink_notify_integration(tmp_path: Path, monkeypatch):
-    """Verify smol shrink --notify sends desktop notification."""
+    """Verify smol shrink --notify sends desktop notification with before/after."""
     # Create a small dummy image
     from PIL import Image
 
     img_path = tmp_path / "photo.jpg"
-    im = Image.new("RGB", (200, 200), color="blue")
+    im = Image.new("RGB", (300, 300), color="blue")
     im.save(img_path, format="JPEG")
 
     mock_run = MagicMock()
     monkeypatch.setattr("subprocess.run", mock_run)
 
-    ret = main(["shrink", str(img_path), "--max", "100KB", "--notify"])
+    ret = main(["shrink", str(img_path), "--max", "20KB", "--notify"])
     assert ret == 0
 
     # Ensure notify-send was called
-    called = any(
-        call.args and call.args[0] and call.args[0][0] == "notify-send"
+    notify_calls = [
+        call.args[0]
         for call in mock_run.call_args_list
-    )
-    assert called, "notify-send was not called with --notify flag"
+        if call.args and call.args[0] and call.args[0][0] == "notify-send"
+    ]
+    assert len(notify_calls) >= 1, "notify-send was not called with --notify flag"
+    final_call = notify_calls[-1]
+    # ["notify-send", "-u", "normal", "-a", "smol", "smol", "<body text>"]
+    body = final_call[-1]
+    assert "photo.jpg:" in body
+    assert "→" in body
+
+
+def test_shrink_notify_batch_and_failure(tmp_path: Path, monkeypatch):
+    """Verify batch and failure notification contents."""
+    from PIL import Image
+
+    img1 = tmp_path / "img1.jpg"
+    img2 = tmp_path / "img2.jpg"
+    Image.new("RGB", (100, 100), color="red").save(img1, "JPEG")
+    Image.new("RGB", (100, 100), color="green").save(img2, "JPEG")
+
+    mock_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    # Batch success
+    ret = main(["shrink", str(img1), str(img2), "--max", "50KB", "--notify"])
+    assert ret == 0
+    notify_calls = [
+        call.args[0]
+        for call in mock_run.call_args_list
+        if call.args and call.args[0] and call.args[0][0] == "notify-send"
+    ]
+    assert notify_calls[-1][-1] == "2 files shrunk"
+
+    # Single failure honest engine message
+    mock_run.reset_mock()
+    bad_file = tmp_path / "missing.jpg"
+    ret = main(["shrink", str(bad_file), "--max", "50KB", "--notify"])
+    assert ret != 0
+    fail_calls = [
+        call.args[0]
+        for call in mock_run.call_args_list
+        if call.args and call.args[0] and call.args[0][0] == "notify-send"
+    ]
+    assert len(fail_calls) >= 1
+    # Body must be the honest engine message (File not found)
+    assert "not found" in fail_calls[-1][-1].lower()

@@ -12,6 +12,10 @@ from typing import Any
 from smol.core.image import shrink_image
 from smol.core.size import format_size, parse_size
 from smol.integrations.manager import get_integrator
+from smol.integrations.notifier import (
+    JobNotifier,
+    send_notification,
+)
 
 
 def _which(cmd: str) -> bool:
@@ -203,10 +207,12 @@ def shrink(argv: list[str]) -> int:
     }
 
     results = []
-    for f in args.files:
-        src_path = Path(f)
-        res = shrink_image(src_path, target_bytes, options=options)
-        results.append((src_path, res))
+    with JobNotifier(notify=args.notify) as notifier:
+        for f in args.files:
+            src_path = Path(f)
+            res = shrink_image(src_path, target_bytes, options=options)
+            results.append((src_path, res))
+        notifier.notify_results(results)
 
     if args.json:
         json_data = [
@@ -257,51 +263,17 @@ def shrink(argv: list[str]) -> int:
             else:
                 print(f"{src_path.name}  ✗ {res.error}")
 
-    if args.notify:
-        _notify_results(results)
-
     return 0 if all(res.ok for _, res in results) else 1
 
 
 def _send_notification(summary: str, body: str, urgency: str = "normal") -> None:
     """Send a desktop notification using notify-send if available."""
-    if shutil.which("notify-send"):
-        try:
-            subprocess.run(
-                ["notify-send", "-u", urgency, "-a", "smol", summary, body],
-                check=False,
-            )
-        except (subprocess.SubprocessError, OSError):
-            pass
+    send_notification(summary, body, urgency=urgency)
 
 
 def _notify_results(results: list[tuple[Path, Any]]) -> None:
     """Send desktop notification summarizing shrink results."""
-    if not results:
-        return
-    if len(results) == 1:
-        src_path, res = results[0]
-        if res.ok:
-            orig_str = format_size(res.original_bytes, spaced=True)
-            final_str = format_size(res.final_bytes, spaced=True)
-            _send_notification("smol", f"{src_path.name}: {orig_str} → {final_str}")
-        else:
-            _send_notification(
-                "smol",
-                f"Failed to shrink {src_path.name}: {res.error}",
-                urgency="critical",
-            )
-    else:
-        all_ok = all(res.ok for _, res in results)
-        if all_ok:
-            _send_notification("smol", f"Successfully shrunk {len(results)} files")
-        else:
-            failed = sum(1 for _, res in results if not res.ok)
-            _send_notification(
-                "smol",
-                f"{failed} of {len(results)} files failed to shrink",
-                urgency="critical",
-            )
+    JobNotifier(notify=True).notify_results(results)
 
 
 def integrate(argv: list[str]) -> int:
