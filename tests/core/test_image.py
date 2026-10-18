@@ -103,32 +103,97 @@ def test_shrink_image_already_small(samples_dir: Path, tmp_path: Path) -> None:
     assert len(list(tmp_path.iterdir())) == 1
 
 
-def test_shrink_image_failure_when_quality_floor_exceeds_target(
+def test_shrink_image_downscale_success(
     samples_dir: Path, tmp_path: Path
 ) -> None:
     src_sample = samples_dir / "portrait.jpg"
-    src_copy = tmp_path / "large_portrait.jpg"
+    src_copy = tmp_path / "portrait_downscale.jpg"
     content = src_sample.read_bytes()
     src_copy.write_bytes(content)
     file_size = len(content)
 
-    # Target 100 KB, but quality 60 on portrait.jpg is ~625 KB
+    # portrait.jpg at q=60 is ~625 KB. Target 100 KB requires downscaling.
     target_bytes = 100_000
+    result = shrink_image(src_copy, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.exists()
+    assert result.output_path != src_copy
+
+    # Original file untouched
+    assert src_copy.read_bytes() == content
+
+    # Size promises: <= target AND >= 90% of target
+    final_size = result.output_path.stat().st_size
+    assert result.final_bytes == final_size
+    assert final_size <= target_bytes
+    assert final_size >= int(0.90 * target_bytes)
+
+    # Result metadata: scale recorded, dimensions shrunk, floor respected
+    assert result.original_bytes == file_size
+    assert result.scale is not None
+    assert 0.0 < result.scale < 1.0
+    assert result.width is not None and result.height is not None
+    assert result.width < 1200
+    assert result.height < 1600
+    assert min(result.width, result.height) >= 200
+    assert result.quality is not None
+    assert 60 <= result.quality <= 90
+    assert result.steps > 0
+
+    # Verify output reopened
+    with Image.open(result.output_path) as out_img:
+        assert out_img.format == "JPEG"
+        assert out_img.size == (result.width, result.height)
+        assert out_img.mode == "RGB"
+
+
+def test_shrink_image_noise_cannot_shrink_failure(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "noise_cannot_shrink.jpg"
+    src_copy = tmp_path / "noise_sample.jpg"
+    content = src_sample.read_bytes()
+    src_copy.write_bytes(content)
+    file_size = len(content)
+
+    # Noise image cannot fit 5 KB even at 200 px floor
+    target_bytes = 5_000
     result = shrink_image(src_copy, target_bytes=target_bytes)
 
     assert result.ok is False
     assert result.output_path is None
     assert result.error is not None
     error_msg = result.error.lower()
-    assert (
-        "quality floor" in error_msg
-        or "cannot fit" in error_msg
-        or "smallest" in error_msg
-    )
+    assert "smallest i can make this is ~" in error_msg
+    assert "200 px" in error_msg
+    assert "try a larger target" in error_msg
     assert result.original_bytes == file_size
+    assert result.steps > 0
     # Original untouched and no extra file created
     assert src_copy.read_bytes() == content
     assert len(list(tmp_path.iterdir())) == 1
+
+
+def test_shrink_image_respects_custom_min_dim(
+    samples_dir: Path, tmp_path: Path
+) -> None:
+    src_sample = samples_dir / "portrait.jpg"
+    src_copy = tmp_path / "custom_min_portrait.jpg"
+    content = src_sample.read_bytes()
+    src_copy.write_bytes(content)
+
+    # At 400 px minimum short-side, portrait cannot fit in 10 KB
+    target_bytes = 10_000
+    result = shrink_image(src_copy, target_bytes=target_bytes, options={"min_dim": 400})
+
+    assert result.ok is False
+    assert result.output_path is None
+    assert result.error is not None
+    assert "400 px" in result.error
+    assert "try a larger target" in result.error.lower()
+    assert src_copy.read_bytes() == content
 
 
 def test_shrink_image_atomic_write(tmp_path: Path) -> None:

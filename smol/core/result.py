@@ -16,6 +16,7 @@ class Result:
     final_bytes: int = 0
     width: int | None = None
     height: int | None = None
+    scale: float | None = None
     quality: int | None = None
     steps: int = 0
     warning: str | None = None

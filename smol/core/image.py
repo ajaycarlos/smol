@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -37,10 +38,12 @@ def shrink_image(
     Pipeline (JPEG):
     1. Decode → apply EXIF rotation → strip metadata → convert to sRGB
     2. If already <= target: return ok with note, copy nothing
-    3. Binary search quality between 60 and 95 (optimize=True, 4:2:0, baseline)
-    4. If quality floor 60 exceeds target: return clean failure (no downscaling yet)
-    5. Verify output by reopening
-    6. Write atomically (temp file then rename)
+    4. If quality floor 60 exceeds target: estimate scale = sqrt(target / floor) * 0.98,
+       resize with Lanczos, search quality 60-90, repeat with 0.9 steps down to min
+       short-side (default 200 px).
+    5. If still too large at min dimension: fail honestly stating smallest size.
+    6. Verify output by reopening
+    7. Write atomically (temp file then rename)
     """
     src_path = Path(src)
     if not src_path.exists():
@@ -49,6 +52,7 @@ def shrink_image(
     opts = options or {}
     quality_floor = int(opts.get("quality_floor", 60))
     quality_max = int(opts.get("quality_max", 95))
+    min_dim = int(opts.get("min_dim", 200))
 
     original_bytes = src_path.stat().st_size
 
@@ -66,6 +70,7 @@ def shrink_image(
             final_bytes=original_bytes,
             width=w,
             height=h,
+            scale=1.0,
             warning=(
                 "File is already smaller than or equal to target size; "
                 "no compression needed."
@@ -105,63 +110,127 @@ def shrink_image(
 
     width, height = img.size
     steps = 0
-    cache: dict[int, bytes] = {}
 
-    def get_jpeg(q: int) -> bytes:
+    def encode_jpeg(im: Image.Image, q: int) -> bytes:
         nonlocal steps
-        if q not in cache:
-            steps += 1
-            cache[q] = _encode_jpeg(img, q)
-        return cache[q]
+        steps += 1
+        return _encode_jpeg(im, q)
 
-    # Evaluate quality floor
-    floor_bytes = get_jpeg(quality_floor)
-    if len(floor_bytes) > target_bytes:
-        floor_len = len(floor_bytes)
-        return Result(
-            ok=False,
-            output_path=None,
-            original_bytes=original_bytes,
-            final_bytes=0,
-            width=width,
-            height=height,
-            quality=None,
-            steps=steps,
-            error=(
-                f"Cannot fit target ({format_size(target_bytes)}) without "
-                f"downscaling. Smallest size at quality floor {quality_floor} "
-                f"is {format_size(floor_len)} ({floor_len:,} bytes)."
-            ),
-        )
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
 
-    # Evaluate maximum quality
-    max_bytes = get_jpeg(quality_max)
-    if len(max_bytes) <= target_bytes:
-        best_q = quality_max
-        best_data = max_bytes
+    # Evaluate quality floor at full resolution
+    floor_bytes = encode_jpeg(img, quality_floor)
+
+    if len(floor_bytes) <= target_bytes:
+        # Full resolution fits within target; search quality in [floor, max]
+        max_bytes = encode_jpeg(img, quality_max)
+        if len(max_bytes) <= target_bytes:
+            best_q = quality_max
+            best_data = max_bytes
+        else:
+            low = quality_floor
+            high = quality_max - 1
+            best_q = quality_floor
+            best_data = floor_bytes
+
+            while low <= high:
+                mid = (low + high) // 2
+                mid_data = encode_jpeg(img, mid)
+                if len(mid_data) <= target_bytes:
+                    best_q = mid
+                    best_data = mid_data
+                    low = mid + 1
+                else:
+                    high = mid - 1
+
+        best_scale = 1.0
+        final_w = width
+        final_h = height
     else:
-        # Binary search in [quality_floor, quality_max - 1]
-        low = quality_floor
-        high = quality_max - 1
-        best_q = quality_floor
-        best_data = floor_bytes
+        # Full-size quality floor exceeds target: enter downscaling loop
+        orig_w, orig_h = width, height
+        orig_short = min(orig_w, orig_h)
+        min_dim_eff = min(orig_short, min_dim)
 
-        while low <= high:
-            mid = (low + high) // 2
-            mid_data = get_jpeg(mid)
-            if len(mid_data) <= target_bytes:
-                best_q = mid
-                best_data = mid_data
-                low = mid + 1  # Seek higher quality that still fits
+        current_scale = math.sqrt(target_bytes / len(floor_bytes)) * 0.98
+
+        while True:
+            target_short = orig_short * current_scale
+            if target_short <= min_dim_eff or orig_short <= min_dim_eff:
+                # Clamp to minimum short-side dimension floor
+                effective_scale = min_dim_eff / orig_short
+                if orig_w <= orig_h:
+                    cur_w = min_dim_eff
+                    cur_h = max(min_dim_eff, round(orig_h * effective_scale))
+                else:
+                    cur_h = min_dim_eff
+                    cur_w = max(min_dim_eff, round(orig_w * effective_scale))
+                is_floor = True
             else:
-                high = mid - 1
+                cur_w = max(min_dim_eff, round(orig_w * current_scale))
+                cur_h = max(min_dim_eff, round(orig_h * current_scale))
+                effective_scale = cur_w / orig_w
+                is_floor = (min(cur_w, cur_h) <= min_dim_eff)
+
+            resized_img = img.resize((cur_w, cur_h), resampling)
+            floor_data = encode_jpeg(resized_img, quality_floor)
+
+            if len(floor_data) > target_bytes:
+                if is_floor:
+                    # Reached minimum dimension floor and still cannot fit
+                    smallest_sz = format_size(len(floor_data))
+                    return Result(
+                        ok=False,
+                        output_path=None,
+                        original_bytes=original_bytes,
+                        final_bytes=0,
+                        width=cur_w,
+                        height=cur_h,
+                        scale=round(effective_scale, 4),
+                        quality=None,
+                        steps=steps,
+                        error=(
+                            f"Smallest I can make this is ~{smallest_sz} "
+                            f"at {min_dim_eff} px; try a larger target."
+                        ),
+                    )
+                # Step down scale with 0.9 steps
+                current_scale *= 0.9
+                continue
+
+            # Fits at quality floor: search quality in 60-90
+            downscale_q_max = min(quality_max, 90)
+            max_data = encode_jpeg(resized_img, downscale_q_max)
+            if len(max_data) <= target_bytes:
+                best_q = downscale_q_max
+                best_data = max_data
+            else:
+                low = quality_floor
+                high = downscale_q_max - 1
+                best_q = quality_floor
+                best_data = floor_data
+
+                while low <= high:
+                    mid = (low + high) // 2
+                    mid_data = encode_jpeg(resized_img, mid)
+                    if len(mid_data) <= target_bytes:
+                        best_q = mid
+                        best_data = mid_data
+                        low = mid + 1
+                    else:
+                        high = mid - 1
+
+            best_scale = round(cur_w / orig_w, 4)
+            final_w = cur_w
+            final_h = cur_h
+            break
 
     # Verify output by reopening
     try:
         with Image.open(io.BytesIO(best_data)) as check_im:
             check_im.verify()
         with Image.open(io.BytesIO(best_data)) as check_im:
-            if check_im.size != (width, height) or check_im.format != "JPEG":
+            if check_im.size != (final_w, final_h) or check_im.format != "JPEG":
                 return Result(
                     ok=False,
                     original_bytes=original_bytes,
@@ -211,8 +280,9 @@ def shrink_image(
         output_path=dest_path,
         original_bytes=original_bytes,
         final_bytes=final_bytes,
-        width=width,
-        height=height,
+        width=final_w,
+        height=final_h,
+        scale=best_scale,
         quality=best_q,
         steps=steps,
     )

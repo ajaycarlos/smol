@@ -54,10 +54,16 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - Clean honest failure if quality floor 60 exceeds target size without downscaling.
   - Verification on reopening and atomic write via temporary file in target directory.
   - Comprehensive unit tests in `tests/core/test_image.py` covering portrait and landscape targets (100 KB and 200 KB) landing between 90% and 100% of target, original file integrity, already-small bypass, and atomic write.
-- VERIFY: `uv run pytest -q tests/core/` (18 passed), `uv run pytest` (71 passed), `uv run ruff check .` clean.
+- Implement downscaling ladder and honest failure in `smol/core/image.py`:
+  - Extended `shrink_image` with Lanczos downscaling loop when quality floor 60 at full resolution exceeds target size.
+  - Initial scale estimation `scale = sqrt(target / size_at_floor) * 0.98`, Lanczos resampling, quality search in 60–90, and iterative 0.9 scale stepping down to configurable minimum short-side floor (`min_dim`, default 200 px).
+  - Honest failure reporting when target is unreachable at minimum dimension floor (`"Smallest I can make this is ~... at 200 px; try a larger target."`) preserving original file and creating no partial files.
+  - Extended `Result` dataclass in `smol/core/result.py` with `scale: float | None` recording downscale ratio along with `quality` and `steps` (total encode attempt count).
+  - Unit tests in `tests/core/test_image.py` verifying downscaling success (portrait to 100 KB landing >= 90%), incompressible noise floor honest failure (`noise_cannot_shrink.jpg` targeting 5 KB), and custom `min_dim` constraints.
+- VERIFY: `uv run pytest -q tests/core/` (20 passed), `uv run pytest` (73 passed), `uv run ruff check .` clean.
 
 ## Next
-- Milestone M1: Add downscaling ladder (Lanczos resize + quality search 60–90 down to 200 px floor) when quality floor 60 exceeds target.
+- Milestone M1: Add format handling for WebP (quality search) and PNG (palette quantisation 256 -> 128 -> 64 colours, then downscale).
 
 
 ## Decisions
