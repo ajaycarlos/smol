@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 class CustomInputDialog(QDialog):
     """Compact frameless dialog for entering custom target sizes."""
 
-    confirmed = Signal(int)
+    confirmed = Signal(object)
     cancelled = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:

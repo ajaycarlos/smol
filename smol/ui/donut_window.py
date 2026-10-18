@@ -178,7 +178,7 @@ _active_shrink_workers: set[ShrinkWorker] = set()
 class DonutWindow(QWidget):
     """Frameless translucent always-on-top donut menu centered on the cursor."""
 
-    shrink_started = Signal(int)
+    shrink_started = Signal(object)
     shrink_progress = Signal(int, int, str)
     shrink_finished = Signal(list)
     shrink_failed = Signal(str, object)
@@ -259,8 +259,12 @@ class DonutWindow(QWidget):
         else:
             self.file_name = f"{len(self.file_paths)} files"
             self.file_size_text = format_size(self.total_bytes, spaced=True)
-            first_valid = existing_files[0] if existing_files else self.file_paths[0]
-            self.thumbnail_pixmap = _load_thumbnail_pixmap(first_valid, max_size=64)
+            self.thumbnail_pixmap = None
+            for p in existing_files:
+                pix = _load_thumbnail_pixmap(p, max_size=64)
+                if pix is not None and not pix.isNull():
+                    self.thumbnail_pixmap = pix
+                    break
 
     def _init_segments(self) -> None:
         """Initialize segment items and apply dimming logic."""
@@ -449,7 +453,7 @@ class DonutWindow(QWidget):
                     self.prediction_service.cancel()
                     self._current_prediction = None
                 else:
-                    first_file = self.file_paths[0] if self.file_paths else None
+                    first_file = self._first_image_path()
                     if first_file is not None:
                         self.prediction_service.request(first_file, item.target_bytes)
             self.update()
@@ -621,24 +625,50 @@ class DonutWindow(QWidget):
         self.shrink_progress.emit(cur, total, name)
         self.update()
 
+    def _first_image_path(self) -> Path | None:
+        """Find the first likely image file in self.file_paths for prediction."""
+        for p in self.file_paths:
+            if not p.is_file():
+                continue
+            if p.suffix.lower() in (
+                ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".avif"
+            ):
+                return p
+        return self.file_paths[0] if self.file_paths else None
+
     def _on_shrink_finished(self, results: list[tuple[Path, Result]]) -> None:
         """Handle completion of background shrink job."""
         self.last_results = results
 
-        all_ok = all(res.ok for _, res in results)
-        if all_ok:
-            self.state = "success"
-            if len(results) == 1:
-                _src, res = results[0]
-                orig_sz = format_size(res.original_bytes, spaced=True)
-                final_sz = format_size(res.final_bytes, spaced=True)
-                self.result_message = f"{orig_sz} → {final_sz}"
-            else:
-                self.result_message = f"{len(results)} files shrunk"
-            self.shrink_finished.emit(results)
-        else:
+        shrunk_items = [
+            (p, r) for p, r in results if r.ok and r.output_path is not None
+        ]
+        small_items = [
+            (p, r) for p, r in results if r.ok and r.output_path is None
+        ]
+        skipped_items = [
+            (p, r)
+            for p, r in results
+            if not r.ok
+            and r.error
+            and ("unsupported" in r.error.lower() or "skipped" in r.error.lower())
+        ]
+        failed_items = [
+            (p, r)
+            for p, r in results
+            if not r.ok
+            and (
+                not r.error
+                or (
+                    "unsupported" not in r.error.lower()
+                    and "skipped" not in r.error.lower()
+                )
+            )
+        ]
+
+        if failed_items:
             self.state = "failure"
-            failed_res = next(res for _, res in results if not res.ok)
+            _failed_path, failed_res = failed_items[0]
             self.failure_error = failed_res.error or "Compression failed"
             m = re.search(r"Smallest[^~]*~([0-9.]+\s*[A-Za-z]+)", self.failure_error)
             if m:
@@ -650,6 +680,33 @@ class DonutWindow(QWidget):
                 self.retry_target_bytes = None
 
             self.shrink_failed.emit(self.failure_error, self.retry_target_bytes)
+        elif not shrunk_items and not small_items and skipped_items:
+            self.state = "failure"
+            _skipped_path, skipped_res = skipped_items[0]
+            self.failure_error = skipped_res.error or "Unsupported file format"
+            self.retry_target_bytes = None
+            self.shrink_failed.emit(self.failure_error, None)
+        else:
+            self.state = "success"
+            if len(results) == 1:
+                _src, res = results[0]
+                if res.output_path is not None:
+                    orig_sz = format_size(res.original_bytes, spaced=True)
+                    final_sz = format_size(res.final_bytes, spaced=True)
+                    self.result_message = f"{orig_sz} → {final_sz}"
+                else:
+                    self.result_message = "Already ≤ target"
+            else:
+                parts: list[str] = []
+                if shrunk_items:
+                    parts.append(f"{len(shrunk_items)} shrunk")
+                if small_items:
+                    parts.append(f"{len(small_items)} already small")
+                if skipped_items:
+                    parts.append(f"{len(skipped_items)} skipped")
+                self.result_message = ", ".join(parts) if parts else "Complete"
+
+            self.shrink_finished.emit(results)
 
         self.update()
 
@@ -975,10 +1032,20 @@ class DonutWindow(QWidget):
                 (center_card_r - 8.0) * 2,
                 18.0,
             )
+            title_text = "Target too small"
+            if self.failure_error:
+                err_lower = self.failure_error.lower()
+                if "read-only" in err_lower or "permission" in err_lower:
+                    title_text = "Folder read-only"
+                elif "unsupported" in err_lower:
+                    title_text = "Unsupported type"
+                elif "not found" in err_lower:
+                    title_text = "File not found"
+
             painter.drawText(
                 err_title_rect,
                 Qt.AlignmentFlag.AlignCenter,
-                "Target too small",
+                title_text,
             )
 
             font_err_msg = QFont()
@@ -992,6 +1059,12 @@ class DonutWindow(QWidget):
                 m = re.search(r"(Smallest [^;]+)", summary_err)
                 if m:
                     summary_err = m.group(1)
+            elif "Try an alternative folder" in summary_err:
+                m = re.search(r"(Try an alternative folder[^.]*)", summary_err)
+                if m:
+                    summary_err = m.group(1)
+            elif "read-only" in summary_err.lower():
+                summary_err = "Output folder is read-only"
             elided_err = fm.elidedText(
                 summary_err,
                 Qt.TextElideMode.ElideMiddle,

@@ -288,13 +288,22 @@ def shrink_image(
 
     original_bytes = src_path.stat().st_size
 
+    # First verify the file is a supported/decodable image format
+    suffix = src_path.suffix.lower()
+    try:
+        with Image.open(src_path) as test_im:
+            _ = test_im.format
+            w, h = test_im.size
+    except (UnidentifiedImageError, OSError, ValueError):
+        ext_str = f"'{suffix}'" if suffix else f"'{src_path.name}'"
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=f"Unsupported file type: {ext_str}; skipped.",
+        )
+
     # Check if already small enough
     if not force_reencode and original_bytes <= target_bytes:
-        try:
-            with Image.open(src_path) as im:
-                w, h = im.size
-        except (OSError, ValueError):
-            w, h = None, None
         return Result(
             ok=True,
             output_path=None,
@@ -667,7 +676,33 @@ def shrink_image(
         )
 
     parent_dir = dest_path.parent
-    parent_dir.mkdir(parents=True, exist_ok=True)
+    if parent_dir.exists() and not os.access(parent_dir, os.W_OK):
+        alt_dir = Path.home() / "Downloads"
+        if not alt_dir.exists():
+            alt_dir = Path.home() / "Desktop"
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=(
+                f"Output folder '{parent_dir}' is read-only. "
+                f"Try an alternative folder such as {alt_dir}."
+            ),
+        )
+
+    try:
+        parent_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        alt_dir = Path.home() / "Downloads"
+        if not alt_dir.exists():
+            alt_dir = Path.home() / "Desktop"
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=(
+                f"Output folder '{parent_dir}' is read-only ({exc}). "
+                f"Try an alternative folder such as {alt_dir}."
+            ),
+        )
 
     temp_path: Path | None = None
     try:
@@ -683,6 +718,20 @@ def shrink_image(
             os.fsync(temp_file.fileno())
 
         temp_path.replace(dest_path)
+    except PermissionError as exc:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        alt_dir = Path.home() / "Downloads"
+        if not alt_dir.exists():
+            alt_dir = Path.home() / "Desktop"
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=(
+                f"Output folder '{parent_dir}' is read-only ({exc}). "
+                f"Try an alternative folder such as {alt_dir}."
+            ),
+        )
     except OSError as exc:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()

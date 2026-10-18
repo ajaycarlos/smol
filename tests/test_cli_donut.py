@@ -44,3 +44,33 @@ def test_cli_donut_successful_selection(samples_dir, monkeypatch, capsys):
     assert ret == 0
     out = capsys.readouterr().out
     assert "100 KB" in out
+
+
+def test_cli_donut_mixed_files(samples_dir, tmp_path, capsys):
+    a_jpg = tmp_path / "a.jpg"
+    b_png = tmp_path / "b.png"
+    c_txt = tmp_path / "c.txt"
+
+    import shutil
+
+    shutil.copy(samples_dir / "portrait.jpg", a_jpg)
+    shutil.copy(samples_dir / "screenshot.png", b_png)
+    c_txt.write_text("Plain text file")
+
+    captured_window = None
+
+    def fake_run(self):
+        nonlocal captured_window
+        captured_window = self
+        if self.on_select:
+            self.on_select("100 KB")
+        return 0
+
+    with patch("smol.ui.donut_window.DonutWindow.run_overlay", fake_run):
+        ret = main(["donut", "--files", str(a_jpg), str(b_png), str(c_txt)])
+
+    assert ret == 0
+    assert captured_window is not None
+    assert captured_window.file_name == "3 files"
+    assert len(captured_window.file_paths) == 3
+

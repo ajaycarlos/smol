@@ -152,6 +152,15 @@ M3 — Donut UI, standalone (In Progress).
   - Added unit test suites in `tests/core/test_config.py` (7 tests), `tests/ui/test_custom_input.py` (8 tests), and `tests/ui/test_donut_custom.py` (4 tests).
   - VERIFY: 220 tests passing in ~13s; `uv run ruff check .` clean.
 
+- Support multiple files, mixed types, already-small files, and read-only output folders (smol/ui/donut_window.py, smol/core/image.py, smol/ui/custom_input.py):
+  - Multiple files: centre card displays "{N} files" with aggregated file size; thumbnail gracefully selects the first valid image from the file list.
+  - Mixed types: unsupported file formats (e.g. text files) are verified upfront, clearly flagged with an informative skip message, and skipped without failing the entire batch or preventing valid images from being shrunk.
+  - Already-small files: files already <= target bytes are safely kept untouched without creating duplicate files, informing the user in the centre card and batch summaries.
+  - Read-only output folders: detects non-writable target directories and permission errors upfront and during atomic write, returning an honest failure suggesting an alternative directory (e.g. `~/Downloads` or `~/Desktop`).
+  - Signal safety: upgraded PySide6 target size signals to `Signal(object)` preventing 32-bit integer overflow and crash on large custom targets.
+  - Added unit test suite in `tests/ui/test_donut_multi.py` (5 tests) and CLI test in `tests/test_cli_donut.py`. Isolated test config via pytest fixture.
+  - VERIFY: `smol donut --files a.jpg b.png c.txt` handles all three types sensibly with no crash; 226 tests passing in ~16s; `uv run ruff check .` clean.
+
 ## Next
 - Milestone M4: Hold-key daemon summoning integration (Path A: X11 full Filee-like experience).
 
