@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M0 (Spike A complete). Next prompt in PROMPTS.md: P1.2
+M0 (Spike A and Spike B complete). Next prompt in PROMPTS.md: P1.3
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -23,11 +23,14 @@ M0 (Spike A complete). Next prompt in PROMPTS.md: P1.2
   trigger keys (Ctrl+Alt, Super, Right Alt, Right Ctrl) measuring hold time in ms.
   Supports X11 (python-xlib via query_keymap and XRecord) and Linux evdev (/dev/input).
   Unit tests in `tests/test_spike_a.py`.
-- VERIFY: `uv run pytest -q` passes (17 passed), `uv run ruff check .` clean,
-  `spikes/a_key_hold.py` verified end-to-end.
+- Create Spike B (`spikes/b_drag_and_cursor.py`): detect file manager drag start
+  while candidate trigger key is held and read global cursor position in screen coordinates.
+  Supports X11 global cursor reading via XQueryPointer and reports architectural
+  evidence with screen centre fallback for Wayland. Unit tests in `tests/test_spike_b.py`.
+- VERIFY: `uv run pytest -q` passes (28 passed), `uv run ruff check .` clean.
 
 ## Next
-- P1.2 — Spike B: mouse drag and cursor position detection (Milestone 0)
+- P1.3 — Spike C: overlay drop window under cursor (Milestone 0)
 
 ## Decisions
 - (record product decisions here with the date)
