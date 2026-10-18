@@ -3,15 +3,15 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M0 (Spike A, Spike B, and Spike C complete).
+M1 — Image engine + CLI (M0 Feasibility Spikes complete).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
 - File manager: nemo (installed)
 - Python: 3.12.3
 - Optional & required tools: uv, ffmpeg, ffprobe, gs (Ghostscript), qpdf, git, notify-send
-- Chosen path from SPIKE.md: not yet applied
-- Default trigger key: candidate keys evaluated in Spike A (Ctrl+Alt, Super, Right Alt, Right Ctrl)
+- Chosen path from SPIKE.md: Path A (X11 full Filee-like experience)
+- Default trigger key: Super (primary default; Ctrl+Alt secondary; plain Ctrl avoided due to file manager copy collision)
 
 ## Done
 - Bootstrap repository structure (P0.1): pyproject.toml, package init files,
@@ -33,13 +33,18 @@ M0 (Spike A, Spike B, and Spike C complete).
   active drag on a timer). Verifies instant appearance (<150 ms target met, ~1–3 ms)
   and non-blocking interaction with the active file manager (`WA_ShowWithoutActivating`).
   Unit tests in `tests/test_spike_c.py`.
+- Synthesize feasibility spike results in `SPIKE.md` (M0 complete): Documented machine
+  compatibility table, evaluated trigger key collision risks (plain Ctrl avoided due to
+  file manager copy behavior), selected Path A (full Filee-like cursor overlay on X11),
+  updated `PLAN.md` Section 9 and Milestone M4.
 - VERIFY: `uv run pytest` passes (40 passed), `uv run ruff check .` clean.
 
 ## Next
-- Synthesize feasibility spike results in `SPIKE.md` (Path A: X11 full vs Path B: Wayland layer-shell vs Path C: palette fallback) to complete Milestone 0.
+- Milestone M1: Implement core image compression engine and `smol shrink` CLI with Pillow and pytest validation on 15+ samples.
 
 ## Decisions
-- (record product decisions here with the date)
+- 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
+- 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
 
 ## Known issues
 - (none yet)

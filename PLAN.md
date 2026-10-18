@@ -89,15 +89,16 @@ Office docs (recompress images in `word/media`), ZIP re-pack, GIF, SVG minify.
 ```
 The CLI and right-click scripts reuse the same engine, so the product is useful before the donut exists.
 
-## 9. Linux desktop reality (the biggest risk)
+## 9. Linux desktop reality (M0 spike verdict: Path A chosen)
 How a key hold, a drag in another app, and an overlay under the cursor work depends on the **display server**:
-- **X11**: everything is possible. This is the easiest path to the Filee-like experience.
-- **Wayland (KDE, Sway, Hyprland)**: possible with layer-shell overlays and portals, with limits.
-- **Wayland (GNOME)**: apps cannot read the global cursor position or place themselves at the cursor. Likely fallback: holding the key opens a centred drop-palette donut that you drag files onto.
+- **X11 (Target Environment - VERIFIED)**: Everything is possible and tested on this machine (Linux / Cinnamon / Nemo). Spikes A, B, and C confirmed **Path A (full Filee-like experience)**:
+  - Global key hold detection via `python-xlib` (`Super` primary, `Ctrl+Alt` secondary; plain `Ctrl` avoided because `Ctrl`+drag triggers "Copy" in Linux file managers).
+  - Global cursor tracking via `XQueryPointer` on root window.
+  - PySide6 frameless translucent overlay summons under the cursor in 0.86–3.16 ms (< 150 ms target) without breaking the active file manager DnD grab (`WA_ShowWithoutActivating`).
+- **Wayland (KDE, Sway, Hyprland)**: Path B (layer-shell overlays and portals) remains a future option.
+- **Wayland (GNOME)**: Path C (holding key opens a centred drop-palette donut) remains the architectural fallback where global cursor position is isolated.
 
-Also: plain Ctrl+drag is "copy" in most Linux file managers, so the default trigger key must be chosen carefully (candidates: Ctrl+Alt, Super, a user-picked key).
-
-**Therefore Milestone 0 is a spike that tests the three risky capabilities on the owner's real machine before any UI is built.**
+Milestone 0 is complete with full evidence documented in `SPIKE.md`.
 
 ## 10. Settings (M6)
 Trigger key (capture box) · size list editor · output folder (next to original / fixed folder) · naming pattern · keep format · strip metadata · minimum dimension · reduce motion · theme · start at login · language.
@@ -124,9 +125,11 @@ Each milestone ends with a "Done when" check the owner can run.
 - `smol donut --files a.jpg b.jpg` opens the donut at the cursor, with hover, prediction, drop, custom size, Esc to cancel.
 - Done when: matches section 4–5 for one and many files, engine runs off the UI thread.
 
-**M4 — Hold-key daemon** (shape depends on M0 result)
-- Background service (systemd user unit or autostart). Hold key + drag shows the donut.
-- Done when: hold key, drag a file out of the file manager, donut appears in under 150 ms, drop produces the shrunk file; idle CPU about 0%.
+**M4 — Hold-key daemon** (Path A: X11 full Filee-like)
+- Background service (systemd user unit or autostart) using `python-xlib` for global key hold detection and `XQueryPointer` for cursor tracking.
+- Trigger key: `Super` (primary default) or `Ctrl+Alt` (secondary), preventing file manager `Ctrl`+drag copy conflict.
+- Hold trigger key + drag file out of Nemo/file manager summons PySide6 translucent donut under the cursor (`WA_ShowWithoutActivating`).
+- Done when: hold key, drag a file out of the file manager, donut appears in under 150 ms (spikes verified ~1–3 ms), drop produces the shrunk file; idle CPU about 0%.
 
 **M5 — Animation and polish**
 - Section 6 in full, toast with Open folder / Undo / Copy path, sounds optional.
