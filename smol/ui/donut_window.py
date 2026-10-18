@@ -19,6 +19,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QMimeData,
+    QPoint,
     QPointF,
     QRectF,
     Qt,
@@ -47,8 +48,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
+from smol.core.config import add_custom_size, get_custom_sizes
 from smol.core.result import Result
 from smol.core.size import format_size, parse_size
+from smol.ui.custom_input import CustomInputDialog
 from smol.ui.donut_geometry import DonutGeometry
 from smol.ui.prediction import Prediction, PredictionService
 from smol.ui.worker import ShrinkWorker
@@ -63,6 +66,28 @@ DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
     ("2 MB", 2_000_000),
     ("Custom…", None),
 ]
+
+
+def build_segment_config(
+    config_path: Path | str | None = None,
+) -> list[tuple[str, int | None]]:
+    """Build list of segment tuples: default sizes, up to 3 custom sizes, and Custom…"""
+    base: list[tuple[str, int | None]] = [
+        ("20 KB", 20_000),
+        ("50 KB", 50_000),
+        ("100 KB", 100_000),
+        ("200 KB", 200_000),
+        ("500 KB", 500_000),
+        ("1 MB", 1_000_000),
+        ("2 MB", 2_000_000),
+    ]
+    base_bytes = {b for _, b in base if b is not None}
+    custom_sizes = get_custom_sizes(config_path)
+    for sz in custom_sizes:
+        if sz not in base_bytes:
+            base.append((format_size(sz, spaced=True), sz))
+    base.append(("Custom…", None))
+    return base
 
 
 @dataclass
@@ -166,13 +191,20 @@ class DonutWindow(QWidget):
         outer_radius: float = 175.0,
         gap_angle: float = 0.0,
         on_select: Callable[[str], None] | None = None,
+        config_path: Path | str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.file_paths = [Path(f) for f in files]
         self.overlay_size = size
+        self.inner_radius = inner_radius
+        self.outer_radius = outer_radius
+        self.gap_angle = gap_angle
         self.on_select = on_select
+        self.config_path = config_path
         self.selected_size: str | None = None
+        self._custom_dialog: CustomInputDialog | None = None
+        self._pending_custom_files: list[Path] = []
 
         self.state: str = "idle"  # "idle" | "working" | "success" | "failure"
         self.center_status_text: str = ""
@@ -192,18 +224,10 @@ class DonutWindow(QWidget):
         self.prediction_service.prediction_ready.connect(self._on_prediction_ready)
         self.prediction_service.prediction_cleared.connect(self._on_prediction_cleared)
 
-        # Build DonutGeometry with equalized gaps
-        self.geometry_calc = DonutGeometry(
-            n_segments=len(DEFAULT_SEGMENT_CONFIG),
-            inner_radius=inner_radius,
-            outer_radius=outer_radius,
-            gap_angle=gap_angle,
-        )
-
         # File metadata and thumbnail
         self._init_file_data()
 
-        # Build segment items with dimming logic
+        # Build segment items with dimming logic and geometry
         self._init_segments()
 
         # Setup window properties
@@ -240,8 +264,15 @@ class DonutWindow(QWidget):
 
     def _init_segments(self) -> None:
         """Initialize segment items and apply dimming logic."""
+        self.segments_config = build_segment_config(self.config_path)
+        self.geometry_calc = DonutGeometry(
+            n_segments=len(self.segments_config),
+            inner_radius=self.inner_radius,
+            outer_radius=self.outer_radius,
+            gap_angle=self.gap_angle,
+        )
         self.segments: list[SegmentItem] = []
-        for idx, (label, target_bytes) in enumerate(DEFAULT_SEGMENT_CONFIG):
+        for idx, (label, target_bytes) in enumerate(self.segments_config):
             # Segments larger than the file are dimmed and unclickable
             # If no files or zero size, keep all segments enabled
             if not self.file_paths or self.max_file_bytes == 0 or target_bytes is None:
@@ -326,12 +357,54 @@ class DonutWindow(QWidget):
         return 0
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Esc key dismisses the overlay."""
+        """Esc key dismisses the overlay and any open custom dialog."""
         if event.key() == Qt.Key.Key_Escape:
+            if self._custom_dialog is not None and self._custom_dialog.isVisible():
+                self._custom_dialog.close()
             self.close()
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def _open_custom_dialog(self, pos: QPointF | QPoint | None = None) -> None:
+        """Open tiny custom input dialog near the cursor or segment."""
+        if self._custom_dialog is not None and self._custom_dialog.isVisible():
+            self._custom_dialog.close()
+
+        self._custom_dialog = CustomInputDialog()
+        self._custom_dialog.confirmed.connect(self._on_custom_confirmed)
+        self._custom_dialog.cancelled.connect(self._on_custom_cancelled)
+
+        if pos is not None:
+            pt = pos.toPoint() if hasattr(pos, "toPoint") else pos
+            global_pos = self.mapToGlobal(pt)
+        else:
+            global_pos = QCursor.pos()
+
+        self._custom_dialog.position_near(global_pos)
+        self._custom_dialog.show()
+        self._custom_dialog.raise_()
+        self._custom_dialog.activateWindow()
+
+    def _on_custom_confirmed(self, target_bytes: int) -> None:
+        """Handle confirmed custom target size."""
+        add_custom_size(target_bytes, self.config_path)
+
+        files = list(self._pending_custom_files) if self._pending_custom_files else None
+        self._pending_custom_files = []
+
+        if files:
+            self.file_paths = files
+            self._init_file_data()
+
+        self._init_segments()
+        self.update()
+
+        self.start_shrink(target_bytes, files=files)
+
+    def _on_custom_cancelled(self) -> None:
+        """Handle cancelled custom input."""
+        self._pending_custom_files = []
 
     def _on_prediction_ready(
         self, path_str: str, target_bytes: int, prediction: Prediction
@@ -391,7 +464,9 @@ class DonutWindow(QWidget):
             self.update()
 
     def closeEvent(self, event: object) -> None:
-        """Clean up background workers on close."""
+        """Clean up background workers and child dialogs on close."""
+        if self._custom_dialog is not None and self._custom_dialog.isVisible():
+            self._custom_dialog.close()
         self.prediction_service.cancel()
         self.prediction_service.wait_for_workers(timeout_ms=300)
         if self._shrink_worker is not None and self._shrink_worker.isRunning():
@@ -479,6 +554,14 @@ class DonutWindow(QWidget):
                 if self.on_select:
                     self.on_select(item.label)
                 self.start_shrink(item.target_bytes)
+                return
+            else:
+                event.acceptProposedAction()
+                self._pending_custom_files = dropped_files
+                self.selected_size = item.label
+                if self.on_select:
+                    self.on_select(item.label)
+                self._open_custom_dialog(pos=pos)
                 return
 
         event.ignore()
@@ -604,10 +687,15 @@ class DonutWindow(QWidget):
             idx = self.geometry_calc.segment_at(dx, dy)
             if idx is not None:
                 item = self.segments[idx]
-                if item.enabled and item.target_bytes is not None:
-                    self.start_shrink(item.target_bytes)
-                    event.accept()
-                    return
+                if item.enabled:
+                    if item.target_bytes is not None:
+                        self.start_shrink(item.target_bytes)
+                        event.accept()
+                        return
+                    else:
+                        self._open_custom_dialog(pos=pos)
+                        event.accept()
+                        return
             return
 
         if self.state == "success":
@@ -618,10 +706,15 @@ class DonutWindow(QWidget):
             idx = self.geometry_calc.segment_at(dx, dy)
             if idx is not None:
                 item = self.segments[idx]
-                if item.enabled and item.target_bytes is not None:
-                    self.start_shrink(item.target_bytes)
-                    event.accept()
-                    return
+                if item.enabled:
+                    if item.target_bytes is not None:
+                        self.start_shrink(item.target_bytes)
+                        event.accept()
+                        return
+                    else:
+                        self._open_custom_dialog(pos=pos)
+                        event.accept()
+                        return
             return
 
         # Idle state
@@ -645,7 +738,7 @@ class DonutWindow(QWidget):
             self.start_shrink(item.target_bytes)
             event.accept()
         else:
-            self.close()
+            self._open_custom_dialog(pos=pos)
             event.accept()
 
     def paintEvent(self, event: QPaintEvent) -> None:

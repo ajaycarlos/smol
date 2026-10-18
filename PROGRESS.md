@@ -143,8 +143,17 @@ M3 — Donut UI, standalone (In Progress).
   - Added unit test suite in `tests/ui/test_shrink_worker.py` (3 tests) and extended `tests/ui/test_donut_window.py` (5 tests).
   - VERIFY: Clicking segment and dropping file triggers worker thread without freezing UI; honest failure displays retry option and re-runs cleanly; 201 tests pass; ruff clean.
 
+- Implement Custom size popup dialog and config persistence (smol/ui/custom_input.py, smol/core/config.py, smol/ui/donut_window.py):
+  - Created `CustomInputDialog` floating liquid glass card near cursor with positive number input, KB/MB toggle, Enter confirm, and Esc cancel.
+  - Implemented strict input validation rejecting zero, negative numbers, empty input, and non-numeric values with inline error messaging.
+  - Created `smol.core.config` to manage user configuration in `~/.config/smol/config.toml` (or `$XDG_CONFIG_HOME/smol/config.toml`), storing up to the last 3 unique custom sizes in bytes via atomic writes.
+  - Integrated custom sizes into `DonutWindow`: dynamically displays the remembered custom sizes as extra segments before "Custom…", and opens the popup near cursor when clicking or dropping files onto "Custom…".
+  - Confirming custom input updates config, re-initializes donut geometry, and triggers the shrink worker thread.
+  - Added unit test suites in `tests/core/test_config.py` (7 tests), `tests/ui/test_custom_input.py` (8 tests), and `tests/ui/test_donut_custom.py` (4 tests).
+  - VERIFY: 220 tests passing in ~13s; `uv run ruff check .` clean.
+
 ## Next
-- Milestone M3: Custom size input popup and hold-key daemon summoning integration (M4).
+- Milestone M4: Hold-key daemon summoning integration (Path A: X11 full Filee-like experience).
 
 
 ## Decisions
