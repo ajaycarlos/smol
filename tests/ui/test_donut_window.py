@@ -267,3 +267,90 @@ def test_donut_window_hover_state(qapp, sample_file_100kb):
     # Leave window
     window.leaveEvent(None)
     assert window._hovered_idx is None
+
+
+def wait_events(ms: int) -> None:
+    import time
+
+    app = QApplication.instance()
+    end_time = time.time() + (ms / 1000.0)
+    while time.time() < end_time:
+        time.sleep(0.01)
+        if app:
+            app.processEvents()
+
+
+def test_donut_window_hover_prediction(qapp, samples_dir):
+    portrait = samples_dir / "portrait.jpg"
+    window = DonutWindow([portrait])
+    window.show()
+
+    # Segment 2 is "100 KB" (index 2)
+    center = QPointF(window.width() / 2.0, window.height() / 2.0)
+    ax, ay = window.geometry_calc.label_anchors[2]
+    hover_pos = center + QPointF(ax, ay)
+
+    # Hover segment 2
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseMove,
+        hover_pos,
+        hover_pos,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.mouseMoveEvent(event)
+    assert window._hovered_idx == 2
+
+    # Initially before debounce: no prediction yet
+    assert getattr(window, "_current_prediction", None) is None
+
+    # Wait for 150 ms debounce + worker execution
+    wait_events(300)
+
+    # Prediction should be populated
+    pred = getattr(window, "_current_prediction", None)
+    assert pred is not None
+    assert pred.ok is True
+    assert "~" in pred.text
+    assert "×" in pred.text
+
+    # Paint event should render prediction text without error
+    pixmap = QPixmap(window.size())
+    pixmap.fill(Qt.GlobalColor.transparent)
+    window.render(pixmap)
+    assert not pixmap.isNull()
+
+    # Leave window: prediction should clear
+    window.leaveEvent(None)
+    assert getattr(window, "_current_prediction", None) is None
+
+    window.close()
+
+
+def test_donut_window_hover_dimmed_segment_no_prediction(qapp, sample_file_30kb):
+    window = DonutWindow([sample_file_30kb])
+    window.show()
+
+    # Segment 2 is "100 KB" which is dimmed for 30 KB file
+    center = QPointF(window.width() / 2.0, window.height() / 2.0)
+    ax, ay = window.geometry_calc.label_anchors[2]
+    hover_pos = center + QPointF(ax, ay)
+
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseMove,
+        hover_pos,
+        hover_pos,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.mouseMoveEvent(event)
+    assert window._hovered_idx == 2
+
+    # Wait for debounce duration
+    wait_events(200)
+
+    # Dimmed segment must NOT trigger a prediction
+    assert getattr(window, "_current_prediction", None) is None
+    window.close()

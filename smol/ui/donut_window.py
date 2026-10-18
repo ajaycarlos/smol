@@ -40,6 +40,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 from smol.core.size import format_size
 from smol.ui.donut_geometry import DonutGeometry
+from smol.ui.prediction import Prediction, PredictionService
 
 DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
     ("20 KB", 20_000),
@@ -155,7 +156,13 @@ class DonutWindow(QWidget):
         self.selected_size: str | None = None
 
         self._hovered_idx: int | None = None
+        self._current_prediction: Prediction | None = None
         self._blurred_desktop: QPixmap | None = None
+
+        # Prediction service for hover estimation
+        self.prediction_service = PredictionService(debounce_ms=150, parent=self)
+        self.prediction_service.prediction_ready.connect(self._on_prediction_ready)
+        self.prediction_service.prediction_cleared.connect(self._on_prediction_cleared)
 
         # Build DonutGeometry with equalized gaps
         self.geometry_calc = DonutGeometry(
@@ -291,8 +298,24 @@ class DonutWindow(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def _on_prediction_ready(
+        self, path_str: str, target_bytes: int, prediction: Prediction
+    ) -> None:
+        """Update center display when prediction arrives for current hover."""
+        if self._hovered_idx is not None:
+            item = self.segments[self._hovered_idx]
+            if item.target_bytes == target_bytes:
+                self._current_prediction = prediction
+                self.update()
+
+    def _on_prediction_cleared(self) -> None:
+        """Clear current prediction text."""
+        if self._current_prediction is not None:
+            self._current_prediction = None
+            self.update()
+
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Update hover state on segments."""
+        """Update hover state on segments and trigger debounced prediction."""
         center = self.rect().center()
         dx = event.position().x() - center.x()
         dy = event.position().y() - center.y()
@@ -300,14 +323,34 @@ class DonutWindow(QWidget):
         idx = self.geometry_calc.segment_at(dx, dy)
         if idx != self._hovered_idx:
             self._hovered_idx = idx
+            if idx is None:
+                self.prediction_service.cancel()
+                self._current_prediction = None
+            else:
+                item = self.segments[idx]
+                if not item.enabled or item.target_bytes is None:
+                    self.prediction_service.cancel()
+                    self._current_prediction = None
+                else:
+                    first_file = self.file_paths[0] if self.file_paths else None
+                    if first_file is not None:
+                        self.prediction_service.request(first_file, item.target_bytes)
             self.update()
         event.accept()
 
     def leaveEvent(self, event: object) -> None:
-        """Clear hover state when mouse leaves window."""
+        """Clear hover state and cancel pending predictions when mouse leaves window."""
         if self._hovered_idx is not None:
             self._hovered_idx = None
+            self.prediction_service.cancel()
+            self._current_prediction = None
             self.update()
+
+    def closeEvent(self, event: object) -> None:
+        """Clean up background workers on close."""
+        self.prediction_service.cancel()
+        self.prediction_service.wait_for_workers(timeout_ms=300)
+        super().closeEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Handle clicks on segments or outside."""
@@ -567,18 +610,30 @@ class DonutWindow(QWidget):
         )
         painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
 
-        # File size: increased font size (9pt) and demibold weight
+        # File size or prediction: increased font size (9pt) and demibold weight
         font_size = QFont()
         font_size.setPointSize(9)
         font_size.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font_size)
-        painter.setPen(QColor(210, 215, 225, 240))
+
+        if self._current_prediction is not None:
+            if self._current_prediction.ok:
+                # Vibrant cyan-white accent for valid prediction
+                painter.setPen(QColor(165, 225, 255, 255))
+            else:
+                # Soft amber accent for impossible target
+                painter.setPen(QColor(251, 191, 36, 255))
+            display_text = self._current_prediction.text
+        else:
+            painter.setPen(QColor(210, 215, 225, 240))
+            display_text = self.file_size_text
+
         size_rect = QRectF(
             center_x - center_card_r + 8.0,
             center_y + 32.0,
             (center_card_r - 8.0) * 2,
             18.0,
         )
-        painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text)
+        painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, display_text)
 
         painter.end()

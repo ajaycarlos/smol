@@ -128,8 +128,15 @@ M3 — Donut UI, standalone (In Progress).
   - Comprehensive unit and CLI test suite in `tests/ui/test_donut_window.py` and `tests/test_cli_donut.py` (18 tests).
   - VERIFY: `uv run smol donut --help` displays usage; all 185 tests pass in ~11s; `uv run ruff check` clean.
 
+- Implement Donut hover predictions with debounce and caching (smol/ui/prediction.py, smol/ui/donut_window.py):
+  - Created `PredictionWorker` QThread computing `shrink_image(..., dry_run=True)` off the UI thread without blocking the Qt event loop.
+  - Implemented `PredictionService` with 150 ms debounce timer, cooperative stale request cancellation on hover change / leave, and per-(file, target_bytes) prediction caching.
+  - Formatted predictions as `~{size}, {w}×{h}` (e.g. `~96 KB, 600×800`) or concise honest failure messages (`Smallest ~...`), rendered in the center card in vibrant cyan-white.
+  - Added unit test suite in `tests/ui/test_prediction.py` (6 tests) and extended `tests/ui/test_donut_window.py` (2 new tests) validating debounce timing, cancellation, cache hits, and center card rendering.
+  - VERIFY: Hovering shows prediction within ~0.27s (< 1s target); event loop processes smoothly without window freeze; 193 tests pass; ruff clean.
+
 ## Next
-- Milestone M3: Wire donut hover predictions, custom size input popup, and engine invocation on drop/click.
+- Milestone M3: Custom size input popup and engine invocation on drop/click.
 
 
 ## Decisions
