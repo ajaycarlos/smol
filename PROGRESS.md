@@ -103,6 +103,11 @@ M2 — Right-click integration + notifications (Complete).
   - Working notification (`Working…`) triggered when a job exceeds 1.5 seconds, cleanly cancelled when jobs complete in under 1.5 seconds.
   - Unit and integration tests in `tests/test_notifier.py` and `tests/test_integrate.py`.
   - VERIFY: right-click shrink execution with `--notify` sends notification with before/after sizes (`photo.jpg: 1.24 MB → 99.51 KB`); all 122 tests pass; ruff clean.
+- Milestone M2 Polish & Release (v0.2.0):
+  - Ran full test suite (122 passed in ~10s) and ruff linter (clean).
+  - Synchronized package and CLI versions to 0.2.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
+  - Added comprehensive `README.md` with "Try it" section covering installation with uv/venv, file manager right-click integration (`smol integrate install/uninstall`), and CLI usage examples (`smol shrink`).
+  - VERIFY: `smol --version` outputs `smol 0.2.0`; `uv run pytest` (122 passed); `uv run ruff check .` clean. Tagged `v0.2.0`.
 
 ## Next
 - Milestone M3: Donut UI, standalone (`smol donut --files a.jpg b.jpg` with PySide6 overlay at cursor, hover, prediction, drop, custom size, Esc cancel).
@@ -113,7 +118,7 @@ M2 — Right-click integration + notifications (Complete).
 - 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
 - 2026-10-18: Enforce post-write disk verification in core engine to guarantee no output file can ever be written or returned as successful above target_bytes.
 
-## Known limits (v0.1.0-engine)
+## Known limits (v0.2.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
