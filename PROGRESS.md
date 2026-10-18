@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M1 — Image engine + CLI (M0 Feasibility Spikes complete).
+M2 — Right-click integration + notifications (Complete).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -89,9 +89,16 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - Added 40 MP test sample (`forty_mp.jpg`, 7300×5500) to `tests/make_samples.py` and test suite, completing the 15+ sample coverage specified in PLAN.md M1.
   - Added comprehensive unit tests in `tests/core/test_image.py` verifying 40 MP shrinking, lossy scale refinement hitting 92–99%, `min_dim` boundary protection, and post-write size check failure handling.
 - VERIFY: `uv run smol shrink tests/samples/portrait.jpg --max 100KB` produces 99.51 KB file (470×627 q85); `uv run smol shrink tests/samples/forty_mp.jpg --max 100KB` produces 98.59 KB file (3931×2962 q89); `uv run pytest` (106 passed in 11.15s); `uv run ruff check .` clean. Tagged `v0.1.0-engine`.
+- Implement `smol integrate install|uninstall|status` and desktop notifications (Milestone M2):
+  - Created `smol.integrations.manager` with reversible right-click integration for Nemo (.nemo_action per size + `actions-tree.json` submenu "Shrink to…") with sizes 20 KB, 50 KB, 100 KB, 200 KB, 500 KB, 1 MB, 2 MB, alongside adapters for Nautilus, Dolphin, and Thunar.
+  - Safe hostile filename quoting via `--` argument separator and `Quote=double`, protecting filenames with spaces, unicode, and leading dashes.
+  - Non-destructive install and clean reversible uninstallation preserving preexisting user configurations.
+  - Desktop notification support via `--notify` in `smol shrink` invoking `notify-send` for success and critical errors.
+  - Added unit and CLI test suite in `tests/test_integrate.py` (7 tests).
+  - VERIFY: `uv run smol integrate install` creates 7 action files and registers "Shrink to…" submenu; action command on photo produces <= 100 KB file with notification; `smol integrate uninstall` cleans up completely; all 113 tests pass; ruff clean.
 
 ## Next
-- Milestone M2: Right-click integration + notifications (file manager right-click action + desktop notification).
+- Milestone M3: Donut UI, standalone (`smol donut --files a.jpg b.jpg` with PySide6 overlay at cursor, hover, prediction, drop, custom size, Esc cancel).
 
 
 ## Decisions

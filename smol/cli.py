@@ -7,9 +7,11 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from smol.core.image import shrink_image
 from smol.core.size import format_size, parse_size
+from smol.integrations.manager import get_integrator
 
 
 def _which(cmd: str) -> bool:
@@ -85,9 +87,7 @@ def doctor() -> int:
     if session_type:
         lines.append(f"✓ XDG_SESSION_TYPE ({session_type})")
     else:
-        lines.append(
-            "✗ XDG_SESSION_TYPE  (set $XDG_SESSION_TYPE, e.g. wayland or x11)"
-        )
+        lines.append("✗ XDG_SESSION_TYPE  (set $XDG_SESSION_TYPE, e.g. wayland or x11)")
 
     desktop = os.environ.get("XDG_CURRENT_DESKTOP")
     if desktop:
@@ -112,8 +112,7 @@ def doctor() -> int:
         lines.append("✓ notify-send")
     else:
         lines.append(
-            "✗ notify-send  "
-            "(install libnotify-bin: sudo apt install libnotify-bin)"
+            "✗ notify-send  (install libnotify-bin: sudo apt install libnotify-bin)"
         )
 
     print("\n".join(lines))
@@ -169,6 +168,11 @@ def shrink(argv: list[str]) -> int:
         type=int,
         default=200,
         help="Minimum dimension for the short side in pixels (default: 200)",
+    )
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send desktop notification upon completion",
     )
 
     if "--help" in argv or "-h" in argv:
@@ -253,7 +257,120 @@ def shrink(argv: list[str]) -> int:
             else:
                 print(f"{src_path.name}  ✗ {res.error}")
 
+    if args.notify:
+        _notify_results(results)
+
     return 0 if all(res.ok for _, res in results) else 1
+
+
+def _send_notification(summary: str, body: str, urgency: str = "normal") -> None:
+    """Send a desktop notification using notify-send if available."""
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(
+                ["notify-send", "-u", urgency, "-a", "smol", summary, body],
+                check=False,
+            )
+        except (subprocess.SubprocessError, OSError):
+            pass
+
+
+def _notify_results(results: list[tuple[Path, Any]]) -> None:
+    """Send desktop notification summarizing shrink results."""
+    if not results:
+        return
+    if len(results) == 1:
+        src_path, res = results[0]
+        if res.ok:
+            orig_str = format_size(res.original_bytes, spaced=True)
+            final_str = format_size(res.final_bytes, spaced=True)
+            _send_notification("smol", f"{src_path.name}: {orig_str} → {final_str}")
+        else:
+            _send_notification(
+                "smol",
+                f"Failed to shrink {src_path.name}: {res.error}",
+                urgency="critical",
+            )
+    else:
+        all_ok = all(res.ok for _, res in results)
+        if all_ok:
+            _send_notification("smol", f"Successfully shrunk {len(results)} files")
+        else:
+            failed = sum(1 for _, res in results if not res.ok)
+            _send_notification(
+                "smol",
+                f"{failed} of {len(results)} files failed to shrink",
+                urgency="critical",
+            )
+
+
+def integrate(argv: list[str]) -> int:
+    """Handle `smol integrate install|uninstall|status` subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="smol integrate",
+        description="Manage file manager right-click context menu integration",
+    )
+    parser.add_argument(
+        "action",
+        choices=["install", "uninstall", "status"],
+        help="Action to perform: install, uninstall, or status",
+    )
+    parser.add_argument(
+        "--file-manager",
+        dest="file_manager",
+        choices=["nemo", "nautilus", "dolphin", "thunar"],
+        default=None,
+        help="Target file manager (default: auto-detected)",
+    )
+
+    if "--help" in argv or "-h" in argv or not argv:
+        parser.print_help()
+        return 0
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    try:
+        integrator = get_integrator(args.file_manager)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.action == "install":
+        res = integrator.install()
+        if res.ok:
+            print(f"✓ {res.message}")
+            return 0
+        else:
+            print(f"✗ {res.message}", file=sys.stderr)
+            return 1
+
+    if args.action == "uninstall":
+        res = integrator.uninstall()
+        if res.ok:
+            print(f"✓ {res.message}")
+            return 0
+        else:
+            print(f"✗ {res.message}", file=sys.stderr)
+            return 1
+
+    if args.action == "status":
+        stat = integrator.status()
+        status_text = (
+            "Installed"
+            if stat.installed
+            else ("Partially installed" if stat.partial else "Not installed")
+        )
+        print(f"File manager: {stat.file_manager}")
+        print(f"Status:       {status_text}")
+        print(f"Details:      {stat.details}")
+        if stat.installed_sizes:
+            print(f"Sizes:        {', '.join(stat.installed_sizes)}")
+        return 0
+
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -284,6 +401,8 @@ def main(argv: list[str] | None = None) -> int:
         return doctor()
     if argv[0] == "shrink":
         return shrink(argv[1:])
+    if argv[0] == "integrate":
+        return integrate(argv[1:])
 
     # Handle unknown commands gracefully
     if argv and argv[0] not in ("shrink", "donut", "daemon", "integrate", "doctor"):
