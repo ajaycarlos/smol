@@ -244,6 +244,8 @@ def shrink_image(
     force_reencode = bool(
         opts.get("force_reencode", False) or opts.get("force", False)
     )
+    dry_run = bool(opts.get("dry_run", False))
+    out_dir = opts.get("out_dir")
     max_pixels = int(
         opts.get(
             "max_pixels",
@@ -605,7 +607,21 @@ def shrink_image(
     elif target_format == "PNG" and suffix not in (".png",):
         output_ext = ".png"
 
-    dest_path = output_path(src_path, target_bytes, ext=output_ext)
+    dest_path = output_path(src_path, target_bytes, ext=output_ext, out_dir=out_dir)
+    if dry_run:
+        return Result(
+            ok=True,
+            output_path=dest_path,
+            original_bytes=original_bytes,
+            final_bytes=len(best_data),
+            width=final_w,
+            height=final_h,
+            scale=best_scale,
+            quality=best_q,
+            steps=steps,
+            warning=conversion_warning,
+        )
+
     parent_dir = dest_path.parent
     parent_dir.mkdir(parents=True, exist_ok=True)
 

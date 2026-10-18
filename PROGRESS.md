@@ -76,10 +76,16 @@ M1 — Image engine + CLI (M0 Feasibility Spikes complete).
   - Registered pillow_heif opener for HEIF/AVIF decoding support in Pillow.
   - Supported optional target extension override in smol/core/paths.py output_path.
   - Added sample.heic, sample.avif, and realistic screenshot.png (~855 KB) to tests/make_samples.py and updated tests/test_samples.py.
-- VERIFY: PNG screenshot sample reaches 100 KB without changing format (98,733 bytes, 98.7% of target). uv run pytest (89 passed), uv run ruff check . clean.
+- Implement `smol shrink FILE... --max <size>` CLI subcommand (smol/cli.py):
+  - Added options: `--json` (machine-readable results), `--dry-run` (predict without writing), `--out-dir` (custom destination), `--allow-convert` (PNG to JPEG fallback), `--keep-metadata` (preserve EXIF/camera metadata), and `--min-side` (short-side pixel floor).
+  - Formatted human output: `<name>  <orig> → <final>  (<w>×<h> q<quality>)`.
+  - Handled exit codes: 0 for all ok, 1 for failures (impossible targets, missing/unreadable files), 2 for bad usage.
+  - Added optional `out_dir` support in `smol/core/paths.py` and `dry_run` + `out_dir` handling in `smol/core/image.py`.
+  - Added comprehensive test suite in `tests/test_cli_shrink.py` (12 tests) verifying argument validation, JSON schema, dry-run safety, honest impossible target reporting, options forwarding, and batch processing.
+- VERIFY: `uv run smol shrink tests/samples/portrait.jpg --max 100KB` produces a file ≤ 100 KB; `--dry-run` predicts without writing; `--json` outputs valid JSON; `uv run pytest` (101 passed), `uv run ruff check .` clean.
 
 ## Next
-- Milestone M1: Implement smol shrink CLI subcommand with options (--max, --json, --dry-run, --keep-format/--allow-convert).
+- Milestone M2: Right-click integration + notifications (file manager right-click action + desktop notification).
 
 
 ## Decisions

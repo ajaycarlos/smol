@@ -70,13 +70,16 @@ def parse_size(val: str | float) -> int:
     return round(number * multiplier)
 
 
-def format_size(target_bytes: int) -> str:
+def format_size(target_bytes: int, spaced: bool = False) -> str:
     """Format bytes as human-readable string (1 KB = 1000 bytes).
 
     Examples:
         format_size(100000) -> "100KB"
+        format_size(100000, spaced=True) -> "100 KB"
         format_size(1500000) -> "1.5MB"
+        format_size(1500000, spaced=True) -> "1.5 MB"
     """
+    sep = " " if spaced else ""
     if target_bytes >= 1_000_000_000:
         val = target_bytes / 1_000_000_000
         unit = "GB"
@@ -87,8 +90,8 @@ def format_size(target_bytes: int) -> str:
         val = target_bytes / 1_000
         unit = "KB"
     else:
-        return f"{target_bytes}B"
+        return f"{target_bytes}{sep}B"
 
     # Format cleanly (e.g., 100 instead of 100.0, 1.5 instead of 1.50)
     formatted = f"{val:.2f}".rstrip("0").rstrip(".")
-    return f"{formatted}{unit}"
+    return f"{formatted}{sep}{unit}"

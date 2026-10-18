@@ -1,10 +1,15 @@
 """CLI entry point for smol: smol shrink, smol donut, smol daemon, etc."""
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
+
+from smol.core.image import shrink_image
+from smol.core.size import format_size, parse_size
 
 
 def _which(cmd: str) -> bool:
@@ -115,6 +120,142 @@ def doctor() -> int:
     return 0
 
 
+def shrink(argv: list[str]) -> int:
+    """Handle `smol shrink FILE... --max 100KB` subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="smol shrink",
+        description="Shrink files to at most a chosen size",
+    )
+    parser.add_argument(
+        "files",
+        nargs="+",
+        metavar="FILE",
+        help="Files to shrink",
+    )
+    parser.add_argument(
+        "--max",
+        dest="max_size",
+        required=True,
+        help="Target maximum size (e.g. 100KB, 1.5MB)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable JSON output",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Predict output size and dimensions without writing files",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default=None,
+        help="Output directory (default: next to original file)",
+    )
+    parser.add_argument(
+        "--allow-convert",
+        action="store_true",
+        help="Allow format conversion (e.g. PNG to JPEG)",
+    )
+    parser.add_argument(
+        "--keep-metadata",
+        action="store_true",
+        help="Keep metadata (EXIF/GPS) instead of stripping",
+    )
+    parser.add_argument(
+        "--min-side",
+        type=int,
+        default=200,
+        help="Minimum dimension for the short side in pixels (default: 200)",
+    )
+
+    if "--help" in argv or "-h" in argv:
+        parser.print_help()
+        return 0
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    try:
+        target_bytes = parse_size(args.max_size)
+    except (ValueError, TypeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.min_side <= 0:
+        print("Error: --min-side must be a positive integer", file=sys.stderr)
+        return 2
+
+    options = {
+        "strip_metadata": not args.keep_metadata,
+        "allow_convert": args.allow_convert,
+        "min_dim": args.min_side,
+        "dry_run": args.dry_run,
+        "out_dir": args.out_dir,
+    }
+
+    results = []
+    for f in args.files:
+        src_path = Path(f)
+        res = shrink_image(src_path, target_bytes, options=options)
+        results.append((src_path, res))
+
+    if args.json:
+        json_data = [
+            {
+                "src": str(src_path),
+                "ok": res.ok,
+                "output_path": str(res.output_path) if res.output_path else None,
+                "original_bytes": res.original_bytes,
+                "final_bytes": res.final_bytes,
+                "width": res.width,
+                "height": res.height,
+                "scale": res.scale,
+                "quality": res.quality,
+                "steps": res.steps,
+                "warning": res.warning,
+                "error": res.error,
+            }
+            for src_path, res in results
+        ]
+        print(json.dumps(json_data, indent=2))
+    else:
+        for src_path, res in results:
+            if res.ok:
+                orig_str = format_size(res.original_bytes, spaced=True)
+                final_str = format_size(res.final_bytes, spaced=True)
+                if (
+                    res.output_path is None
+                    and res.warning
+                    and "already" in res.warning.lower()
+                ):
+                    detail_str = "(already ≤ target)"
+                else:
+                    dim_str = (
+                        f"{res.width}\u00d7{res.height}"
+                        if res.width and res.height
+                        else ""
+                    )
+                    if res.quality is not None:
+                        q_str = f" q{res.quality}" if dim_str else f"q{res.quality}"
+                    else:
+                        q_str = ""
+                    inner = f"{dim_str}{q_str}".strip()
+                    detail_str = f"({inner})" if inner else ""
+                if detail_str:
+                    print(f"{src_path.name}  {orig_str} → {final_str}  {detail_str}")
+                else:
+                    print(f"{src_path.name}  {orig_str} → {final_str}")
+            else:
+                print(f"{src_path.name}  ✗ {res.error}")
+
+    return 0 if all(res.ok for _, res in results) else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -134,10 +275,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    # Handle known global flags
-    if not argv or argv[0] in ("--help", "-h"):
-        parser.print_help()
-        return 0
     if argv[0] == "--version":
         print("smol 0.1.0")
         return 0
@@ -145,6 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     # Handle subcommands
     if argv[0] == "doctor":
         return doctor()
+    if argv[0] == "shrink":
+        return shrink(argv[1:])
 
     # Handle unknown commands gracefully
     if argv and argv[0] not in ("shrink", "donut", "daemon", "integrate", "doctor"):

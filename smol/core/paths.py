@@ -4,9 +4,12 @@ from smol.core.size import format_size, parse_size
 
 
 def output_path(
-    src: str | Path, target_bytes: int | str, ext: str | None = None
+    src: str | Path,
+    target_bytes: int | str,
+    ext: str | None = None,
+    out_dir: str | Path | None = None,
 ) -> Path:
-    """Generate a destination output path next to the source file.
+    """Generate a destination output path next to the source file or in out_dir.
 
     Pattern: `<name>_<size>.<ext>`
     On collision: `<name>_<size>-1.<ext>`, `<name>_<size>-2.<ext>`, etc.
@@ -19,7 +22,7 @@ def output_path(
         size_bytes = parse_size(target_bytes)
 
     size_label = format_size(size_bytes)
-    parent = src_path.parent
+    parent = Path(out_dir) if out_dir is not None else src_path.parent
     stem = src_path.stem
     if ext is not None:
         suffix = ext if ext.startswith(".") else f".{ext}"
