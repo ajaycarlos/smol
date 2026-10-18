@@ -120,13 +120,13 @@ M3 — Donut UI, standalone (In Progress).
 - Implement `smol donut --files FILE...` overlay window (smol/ui/donut_window.py, smol/cli.py):
   - Frameless, translucent (`WA_TranslucentBackground`), always-on-top (`WindowStaysOnTopHint`), tool overlay window centred on cursor with screen boundary clamping.
   - Painted with QPainter using `donut_geometry` with 8 segments: 20 KB, 50 KB, 100 KB, 200 KB, 500 KB, 1 MB, 2 MB, Custom…
-  - Segments larger than the input file are dimmed and unclickable; Custom… remains active.
-  - Centre circular card displays file thumbnail (loaded via Pillow or Qt), filename (elided middle), and formatted current size.
-  - Dark glass styling readable on any wallpaper with hover brightening and subtle glowing borders.
+  - Segments larger than the input file are dimmed (rgba 0,0,0,120) with 35% label opacity and unclickable; Custom… and active segments remain 100% white.
+  - Liquid glass visual treatment: desktop snapshot Gaussian blur behind donut, semi-transparent dark tint (rgba 15,15,25,180), outer edge light bend highlight gradient, inner ring highlight (rgba 255,255,255,40), 1px thin separators (rgba 255,255,255,30), hover brightening with subtle radial glow behind labels, and overall 0.96 window opacity.
+  - Equalized segment separators removing 12 o'clock gap imbalance; enhanced centre typography (10pt bold filename, 9pt demibold size) and thumbnail soft drop shadow.
   - Dismissal on Esc key press or clicking outside the outer donut ring.
   - Segment click prints chosen size to stdout and cleanly exits.
-  - Comprehensive unit and CLI test suite in `tests/ui/test_donut_window.py` and `tests/test_cli_donut.py` (16 tests).
-  - VERIFY: `uv run smol donut --help` displays usage; all 183 tests pass in ~11s; `uv run ruff check` clean.
+  - Comprehensive unit and CLI test suite in `tests/ui/test_donut_window.py` and `tests/test_cli_donut.py` (18 tests).
+  - VERIFY: `uv run smol donut --help` displays usage; all 185 tests pass in ~11s; `uv run ruff check` clean.
 
 ## Next
 - Milestone M3: Wire donut hover predictions, custom size input popup, and engine invocation on drop/click.

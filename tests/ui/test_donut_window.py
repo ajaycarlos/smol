@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -46,6 +47,7 @@ def test_donut_window_flags_and_attributes(qapp, sample_file_100kb):
 
     assert window.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) is True
     assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating) is True
+    assert math.isclose(window.windowOpacity(), 0.96, abs_tol=0.01)
 
 
 def test_donut_window_cursor_centering(qapp, sample_file_100kb, monkeypatch):
@@ -220,3 +222,48 @@ def test_donut_window_paint_event_headless(qapp, samples_dir):
     assert not pixmap.isNull()
     assert pixmap.width() == window.width()
     assert pixmap.height() == window.height()
+
+
+def test_donut_window_liquid_glass_properties(qapp, samples_dir):
+    portrait = samples_dir / "portrait.jpg"
+    window = DonutWindow([portrait])
+
+    # Check window opacity
+    assert math.isclose(window.windowOpacity(), 0.96, abs_tol=0.01)
+
+    # Check desktop capture method execution
+    window.capture_desktop_background()
+
+    # Create dummy blurred background pixmap and test rendering with it
+    dummy_pix = QPixmap(window.size())
+    dummy_pix.fill(Qt.GlobalColor.darkBlue)
+    window._blurred_desktop = dummy_pix
+
+    pixmap = QPixmap(window.size())
+    pixmap.fill(Qt.GlobalColor.transparent)
+    window.render(pixmap)
+    assert not pixmap.isNull()
+
+
+def test_donut_window_hover_state(qapp, sample_file_100kb):
+    window = DonutWindow([sample_file_100kb])
+
+    center = QPointF(window.width() / 2.0, window.height() / 2.0)
+    ax, ay = window.geometry_calc.label_anchors[0]
+    hover_pos = center + QPointF(ax, ay)
+
+    # Move mouse over segment 0
+    move_event = QMouseEvent(
+        QMouseEvent.Type.MouseMove,
+        hover_pos,
+        hover_pos,
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.mouseMoveEvent(move_event)
+    assert window._hovered_idx == 0
+
+    # Leave window
+    window.leaveEvent(None)
+    assert window._hovered_idx is None
