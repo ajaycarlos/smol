@@ -95,7 +95,14 @@ M2 — Right-click integration + notifications (Complete).
   - Non-destructive install and clean reversible uninstallation preserving preexisting user configurations.
   - Desktop notification support via `--notify` in `smol shrink` invoking `notify-send` for success and critical errors.
   - Added unit and CLI test suite in `tests/test_integrate.py` (7 tests).
-  - VERIFY: `uv run smol integrate install` creates 7 action files and registers "Shrink to…" submenu; action command on photo produces <= 100 KB file with notification; `smol integrate uninstall` cleans up completely; all 113 tests pass; ruff clean.
+- Implement desktop notifications and terminal fallback (`smol.integrations.notifier`):
+  - Created `JobNotifier` context manager and notification dispatcher supporting `notify-send` with automatic terminal fallback.
+  - Success notification formatted as `photo.jpg: 1.02 MB → 97 KB` with before and after sizes.
+  - Honest engine message on failure (e.g. `Smallest I can make this is ~... at 200 px; try a larger target.`).
+  - Batch job summaries (`3 files shrunk, 1 failed`, `2 files shrunk`, `2 files failed`).
+  - Working notification (`Working…`) triggered when a job exceeds 1.5 seconds, cleanly cancelled when jobs complete in under 1.5 seconds.
+  - Unit and integration tests in `tests/test_notifier.py` and `tests/test_integrate.py`.
+  - VERIFY: right-click shrink execution with `--notify` sends notification with before/after sizes (`photo.jpg: 1.24 MB → 99.51 KB`); all 122 tests pass; ruff clean.
 
 ## Next
 - Milestone M3: Donut UI, standalone (`smol donut --files a.jpg b.jpg` with PySide6 overlay at cursor, hover, prediction, drop, custom size, Esc cancel).
