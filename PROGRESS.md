@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M3 — Donut UI, standalone (In Progress).
+M3 — Donut UI, standalone (Complete). M4 — Hold-key daemon summoning integration (Next).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -161,16 +161,28 @@ M3 — Donut UI, standalone (In Progress).
   - Added unit test suite in `tests/ui/test_donut_multi.py` (5 tests) and CLI test in `tests/test_cli_donut.py`. Isolated test config via pytest fixture.
   - VERIFY: `smol donut --files a.jpg b.png c.txt` handles all three types sensibly with no crash; 226 tests passing in ~16s; `uv run ruff check .` clean.
 
+- Visual critique & liquid glass design overhaul across 5 donut states (v0.3.0):
+  - Captured screenshots across 5 states (idle, hover, long filename, 800×600 compact screen, many segments dimmed) on both light and dark desktop wallpapers using `scripts/capture_donut_states.py`.
+  - Critiqued honestly across readability, spacing, hit areas, and contrast on light/dark backgrounds.
+  - Fixed top 5 issues in `smol/ui/donut_window.py`:
+    1. Dimmed segment contrast on light wallpaper: eliminated inverse contrast/light bleed using a unified base glass disc (`rgba(16, 18, 27, 215)`), darker recessed segment tint (`rgba(10, 12, 18, 160)`), and crisp high-contrast slate labels (`rgba(160, 172, 195, 175)`) with soft dark drop shadows.
+    2. Floating elevation & outer rim: added a 12px smooth radial ambient drop shadow elevating the donut off any wallpaper, plus a continuous specular rim highlight gradient and etched-glass separator lines.
+    3. Center card vertical layout: balanced thumbnail, filename, and file size/prediction positions with symmetrical top/bottom margins, eliminating vertical crowding.
+    4. Long filename typography: added adaptive font sizing (9pt DemiBold for >22 chars) and soft text drop shadows, preventing harsh truncation and ensuring clear legibility against complex desktop backgrounds.
+    5. Compact display (800×600) adaptation & boundary clamping: added `adapt_compact_size()` scaling to 340×340 on screens <=720px height with 8px boundary margins, maintaining comfortable touch/click hit targets without dominating small screens.
+  - Added regression test suite in `tests/ui/test_donut_window.py` covering compact scaling, screen clamping, and visual state rendering.
+  - VERIFY: Screenshots show visible improvement across all 5 states on both light and dark wallpapers; all 229 tests pass; `uv run ruff check .` clean. Tagged `v0.3.0`.
+
 ## Next
 - Milestone M4: Hold-key daemon summoning integration (Path A: X11 full Filee-like experience).
-
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
 - 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
 - 2026-10-18: Enforce post-write disk verification in core engine to guarantee no output file can ever be written or returned as successful above target_bytes.
+- 2026-10-19: Standardize unified deep glass foundation disc (`rgba(16, 18, 27, 215)`) under frosted desktop snapshot to guarantee consistent text contrast and eliminate inverted brightness on light wallpapers.
 
-## Known limits (v0.2.0)
+## Known limits (v0.3.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.

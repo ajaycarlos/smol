@@ -536,3 +536,81 @@ def test_donut_click_retry_button_triggers_shrink(qapp, samples_dir, tmp_path):
     wait_for_worker(window)
     assert window.state == "success"
     window.close()
+
+
+def test_donut_adapt_compact_size(qapp, sample_file_100kb):
+    window = DonutWindow([sample_file_100kb])
+    assert window.overlay_size == 380
+    assert window.width() == 380
+
+    window.adapt_compact_size(340, 68.0, 156.0)
+    assert window.overlay_size == 340
+    assert window.width() == 340
+    assert window.height() == 340
+    assert window.inner_radius == 68.0
+    assert window.outer_radius == 156.0
+    assert window.geometry_calc.inner_radius == 68.0
+    assert window.geometry_calc.outer_radius == 156.0
+    window.close()
+
+
+def test_donut_auto_compact_on_tiny_screen(qapp, sample_file_100kb, monkeypatch):
+    from PySide6.QtCore import QPoint, QRect
+    from PySide6.QtGui import QCursor
+
+    # Mock screen with 800x600 geometry
+    mock_screen = MagicMock()
+    mock_screen.availableGeometry.return_value = QRect(0, 0, 800, 600)
+
+    monkeypatch.setattr(QApplication, "screenAt", lambda _pos: mock_screen)
+    monkeypatch.setattr(QCursor, "pos", staticmethod(lambda: QPoint(400, 300)))
+
+    window = DonutWindow([sample_file_100kb])
+    window.center_on_cursor()
+
+    assert window.overlay_size == 340
+    assert window.width() == 340
+    assert window.height() == 340
+    # Window should be clamped safely within 8px margin of 800x600 screen
+    assert window.x() >= 8
+    assert window.y() >= 8
+    assert window.x() + window.width() <= 800 - 8
+    assert window.y() + window.height() <= 600 - 8
+    window.close()
+
+
+def test_donut_render_all_visual_states(qapp, samples_dir, tmp_path):
+    long_file = tmp_path / "very_long_file_name_for_visual_testing_landscape_2026.jpg"
+    shutil.copy(samples_dir / "landscape.jpg", long_file)
+
+    # 1. Idle state with long filename
+    win_long = DonutWindow([long_file])
+    pix = QPixmap(win_long.size())
+    pix.fill(Qt.GlobalColor.transparent)
+    win_long.render(pix)
+    assert not pix.isNull()
+    win_long.close()
+
+    # 2. Hover state with prediction
+    from smol.ui.prediction import Prediction
+    win_hover = DonutWindow([samples_dir / "portrait.jpg"])
+    win_hover._hovered_idx = 2
+    win_hover._current_prediction = Prediction(
+        target_bytes=100_000,
+        ok=True,
+        text="~99.5 KB, 470×627",
+        final_bytes=99512,
+        width=470,
+        height=627,
+    )
+    pix_hover = QPixmap(win_hover.size())
+    win_hover.render(pix_hover)
+    assert not pix_hover.isNull()
+    win_hover.close()
+
+    # 3. Many dimmed state
+    win_dim = DonutWindow([samples_dir / "already_small.jpg"])
+    pix_dim = QPixmap(win_dim.size())
+    win_dim.render(pix_dim)
+    assert not pix_dim.isNull()
+    win_dim.close()

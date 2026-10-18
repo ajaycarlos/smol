@@ -333,22 +333,43 @@ class DonutWindow(QWidget):
         except (OSError, RuntimeError, AttributeError):
             self._blurred_desktop = None
 
+    def adapt_compact_size(
+        self,
+        size: int = 340,
+        inner_radius: float = 68.0,
+        outer_radius: float = 156.0,
+    ) -> None:
+        """Adaptively scale donut geometry for compact screens."""
+        self.overlay_size = size
+        self.inner_radius = inner_radius
+        self.outer_radius = outer_radius
+        self.setFixedSize(size, size)
+        self._init_segments()
+
     def center_on_cursor(self) -> None:
         """Position overlay centered on the current cursor position."""
         cursor_pos = QCursor.pos()
-        w = self.width()
-        h = self.height()
-        target_x = cursor_pos.x() - (w // 2)
-        target_y = cursor_pos.y() - (h // 2)
-
-        # Clamp to screen boundary
         screen = QApplication.screenAt(cursor_pos) or QApplication.primaryScreen()
         if screen:
             geo = screen.availableGeometry()
-            target_x = max(geo.left(), min(target_x, geo.right() - w))
-            target_y = max(geo.top(), min(target_y, geo.bottom() - h))
+            # If screen is compact (<= 720 height), adapt overlay size if default
+            if geo.height() <= 720 and self.overlay_size == 380:
+                self.adapt_compact_size(340, 68.0, 156.0)
 
-        self.move(target_x, target_y)
+            w = self.width()
+            h = self.height()
+            target_x = cursor_pos.x() - (w // 2)
+            target_y = cursor_pos.y() - (h // 2)
+
+            # Clamp to screen boundary with safety margin
+            margin = 8
+            target_x = max(geo.left() + margin, min(target_x, geo.right() - w - margin))
+            target_y = max(geo.top() + margin, min(target_y, geo.bottom() - h - margin))
+            self.move(target_x, target_y)
+        else:
+            w = self.width()
+            h = self.height()
+            self.move(cursor_pos.x() - (w // 2), cursor_pos.y() - (h // 2))
 
     def run_overlay(self) -> int:
         """Center on cursor, capture backdrop, show window, and execute event loop."""
@@ -814,7 +835,23 @@ class DonutWindow(QWidget):
         outer_rect = QRectF(center_x - r_out, center_y - r_out, r_out * 2, r_out * 2)
         inner_rect = QRectF(center_x - r_in, center_y - r_in, r_in * 2, r_in * 2)
 
-        # 1. Background blur: paint blurred snapshot of desktop behind the donut
+        # 1. Ambient outer drop shadow (elevation effect)
+        shadow_rect = QRectF(
+            center_x - r_out - 12.0,
+            center_y - r_out - 12.0,
+            (r_out + 12.0) * 2,
+            (r_out + 12.0) * 2,
+        )
+        shadow_grad = QRadialGradient(center_pt, r_out + 12.0)
+        shadow_grad.setColorAt(r_out / (r_out + 12.0), QColor(0, 0, 0, 95))
+        shadow_grad.setColorAt((r_out + 4.0) / (r_out + 12.0), QColor(0, 0, 0, 45))
+        shadow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(shadow_grad))
+        painter.drawEllipse(shadow_rect)
+
+        # 2. Background blur & base dark glass disc
+        # (ensures consistent contrast on all wallpapers)
         donut_clip = QPainterPath()
         donut_clip.addEllipse(outer_rect)
 
@@ -822,14 +859,14 @@ class DonutWindow(QWidget):
         painter.setClipPath(donut_clip)
         if self._blurred_desktop and not self._blurred_desktop.isNull():
             painter.drawPixmap(0, 0, self._blurred_desktop)
-        else:
-            # Base dark translucent background if snapshot not available (e.g. headless)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(16, 17, 24, 220))
-            painter.drawEllipse(outer_rect)
+
+        # Base deep glass foundation disc for consistent rich darkness on all wallpapers
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(16, 18, 27, 215))
+        painter.drawEllipse(outer_rect)
         painter.restore()
 
-        # 2. Render each donut segment (tint, highlights, labels)
+        # 3. Render each donut segment (tint, highlights, labels)
         for idx, seg_geom in enumerate(self.geometry_calc.segments):
             item = self.segments[idx]
             is_hovered = idx == self._hovered_idx and item.enabled
@@ -845,16 +882,16 @@ class DonutWindow(QWidget):
             path.arcTo(inner_rect, end_qt, -sweep_qt)
             path.closeSubpath()
 
-            # Segment Fill: semi-transparent dark tint over blurred background
+            # Segment Fill:
+            # Active segments: rich deep glass tint
+            # Hovered segments: bright interactive feedback
+            # Dimmed segments: darker recessed tint (never brighter than active)
             if not item.enabled:
-                # Dimmed segment (larger than file): rgba(0, 0, 0, 120)
-                fill_color = QColor(0, 0, 0, 120)
+                fill_color = QColor(10, 12, 18, 160)
             elif is_hovered:
-                # Brighten tint when hovered
-                fill_color = QColor(35, 38, 52, 210)
+                fill_color = QColor(45, 52, 75, 190)
             else:
-                # Active segment fill: rgba(15, 15, 25, 180)
-                fill_color = QColor(15, 15, 25, 180)
+                fill_color = QColor(22, 25, 38, 125)
 
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill_color)
@@ -878,71 +915,86 @@ class DonutWindow(QWidget):
                 painter.setBrush(QBrush(glow))
                 painter.drawEllipse(anchor, 42.0, 42.0)
 
-            # Edge light bend: thin arc highlight along the OUTER edge
-            # of active segments
-            if item.enabled:
-                p_start = QPointF(
-                    center_x + r_out * math.sin(math.radians(seg_geom.start_angle)),
-                    center_y - r_out * math.cos(math.radians(seg_geom.start_angle)),
-                )
-                p_end = QPointF(
-                    center_x + r_out * math.sin(math.radians(seg_geom.end_angle)),
-                    center_y - r_out * math.cos(math.radians(seg_geom.end_angle)),
-                )
-                edge_grad = QLinearGradient(p_start, p_end)
-                top_alpha = 100 if is_hovered else 60
-                edge_grad.setColorAt(0.0, QColor(255, 255, 255, top_alpha))
-                edge_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-
-                path_outer = QPainterPath()
-                path_outer.arcMoveTo(outer_rect, start_qt)
-                path_outer.arcTo(outer_rect, start_qt, sweep_qt)
-
-                painter.setPen(QPen(QBrush(edge_grad), 1.5))
+                # Outer edge accent arc for hovered segment
+                path_outer_hover = QPainterPath()
+                path_outer_hover.arcMoveTo(outer_rect, start_qt)
+                path_outer_hover.arcTo(outer_rect, start_qt, sweep_qt)
+                painter.setPen(QPen(QColor(165, 225, 255, 180), 2.0))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPath(path_outer)
-
-            # Inner ring highlight: thin bright arc along the INNER circle edge
-            path_inner = QPainterPath()
-            path_inner.arcMoveTo(inner_rect, start_qt)
-            path_inner.arcTo(inner_rect, start_qt, sweep_qt)
-            painter.setPen(QPen(QColor(255, 255, 255, 40), 1.0))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(path_inner)
+                painter.drawPath(path_outer_hover)
 
             # Segment label:
-            # Active labels: 100% full brightness white (equalized left/right)
-            # Dimmed labels: 35% opacity
+            # Active labels: 100% white with subtle dark drop shadow
+            # Dimmed labels: crisp muted slate (high WCAG contrast, clearly inactive)
             font = QFont()
             font.setPointSize(10)
             font.setBold(True)
             painter.setFont(font)
 
+            text_rect = QRectF(anchor.x() - 45.0, anchor.y() - 12.0, 90.0, 24.0)
+
             if item.enabled:
                 label_color = QColor(255, 255, 255, 255)
+                shadow_color = QColor(0, 0, 0, 160)
             else:
-                label_color = QColor(255, 255, 255, 89)  # 35% of 255
+                label_color = QColor(160, 172, 195, 175)
+                shadow_color = QColor(0, 0, 0, 140)
 
+            # Text shadow for maximum legibility on any wallpaper
+            painter.setPen(shadow_color)
+            painter.drawText(
+                text_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                item.label,
+            )
             painter.setPen(label_color)
-            text_rect = QRectF(anchor.x() - 45.0, anchor.y() - 12.0, 90.0, 24.0)
             painter.drawText(
                 text_rect,
                 Qt.AlignmentFlag.AlignCenter,
                 item.label,
             )
 
-        # 3. Segment separators: thin 1px line in rgba(255, 255, 255, 30)
-        sep_pen = QPen(QColor(255, 255, 255, 30), 1.0)
-        painter.setPen(sep_pen)
+        # 4. Continuous outer specular rim & inner ring highlight
+        rim_grad = QLinearGradient(
+            QPointF(center_x, center_y - r_out),
+            QPointF(center_x, center_y + r_out),
+        )
+        rim_grad.setColorAt(0.0, QColor(255, 255, 255, 95))
+        rim_grad.setColorAt(0.4, QColor(255, 255, 255, 40))
+        rim_grad.setColorAt(1.0, QColor(255, 255, 255, 15))
+        painter.setPen(QPen(QBrush(rim_grad), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(outer_rect)
+
+        # Inner ring highlight: seamless continuous bright circle
+        painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(inner_rect)
+
+        # 5. Segment separators: etched glass grooves (shadow line + specular highlight)
         for seg_geom in self.geometry_calc.segments:
             rad = math.radians(seg_geom.start_angle)
-            x1 = center_x + r_in * math.sin(rad)
-            y1 = center_y - r_in * math.cos(rad)
-            x2 = center_x + r_out * math.sin(rad)
-            y2 = center_y - r_out * math.cos(rad)
-            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+            sin_rad = math.sin(rad)
+            cos_rad = math.cos(rad)
+            x1 = center_x + r_in * sin_rad
+            y1 = center_y - r_in * cos_rad
+            x2 = center_x + r_out * sin_rad
+            y2 = center_y - r_out * cos_rad
 
-        # 4. Centre circle: frosted glass treatment
+            # Subtle shadow groove line
+            painter.setPen(QPen(QColor(0, 0, 0, 60), 1.0))
+            painter.drawLine(
+                QPointF(x1 - cos_rad * 0.5, y1 - sin_rad * 0.5),
+                QPointF(x2 - cos_rad * 0.5, y2 - sin_rad * 0.5),
+            )
+            # Light specular line
+            painter.setPen(QPen(QColor(255, 255, 255, 35), 1.0))
+            painter.drawLine(
+                QPointF(x1 + cos_rad * 0.5, y1 + sin_rad * 0.5),
+                QPointF(x2 + cos_rad * 0.5, y2 + sin_rad * 0.5),
+            )
+
+        # 6. Centre circle: frosted glass treatment
         center_card_r = r_in - 2.0
         card_rect = QRectF(
             center_x - center_card_r,
@@ -952,35 +1004,47 @@ class DonutWindow(QWidget):
         )
 
         # Centre dark tint overlay
-        painter.setBrush(QColor(15, 15, 25, 200))
-        painter.setPen(QPen(QColor(255, 255, 255, 40), 1.2))
+        painter.setBrush(QColor(15, 15, 25, 205))
+        painter.setPen(QPen(QColor(255, 255, 255, 45), 1.2))
         painter.drawEllipse(card_rect)
 
         if self.state == "working":
-            # Simple working state in centre
+            # Working state in centre
             font_work = QFont()
             font_work.setPointSize(11)
             font_work.setBold(True)
             painter.setFont(font_work)
-            painter.setPen(QColor(165, 225, 255, 255))
             work_rect = QRectF(
                 center_x - center_card_r + 8.0,
                 center_y - 18.0,
                 (center_card_r - 8.0) * 2,
                 22.0,
             )
+            painter.setPen(QColor(0, 0, 0, 160))
+            painter.drawText(
+                work_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                "Working…",
+            )
+            painter.setPen(QColor(165, 225, 255, 255))
             painter.drawText(work_rect, Qt.AlignmentFlag.AlignCenter, "Working…")
 
             font_sub = QFont()
             font_sub.setPointSize(9)
             painter.setFont(font_sub)
-            painter.setPen(QColor(200, 210, 225, 230))
             sub_rect = QRectF(
                 center_x - center_card_r + 8.0,
                 center_y + 8.0,
                 (center_card_r - 8.0) * 2,
                 18.0,
             )
+            painter.setPen(QColor(0, 0, 0, 140))
+            painter.drawText(
+                sub_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                self.center_status_text or "Shrinking...",
+            )
+            painter.setPen(QColor(200, 210, 225, 230))
             painter.drawText(
                 sub_rect,
                 Qt.AlignmentFlag.AlignCenter,
@@ -988,31 +1052,43 @@ class DonutWindow(QWidget):
             )
 
         elif self.state == "success":
-            # Plain result message in centre
+            # Success state in centre
             font_done = QFont()
             font_done.setPointSize(12)
             font_done.setBold(True)
             painter.setFont(font_done)
-            painter.setPen(QColor(52, 211, 153, 255))  # Emerald green
             done_rect = QRectF(
                 center_x - center_card_r + 8.0,
                 center_y - 20.0,
                 (center_card_r - 8.0) * 2,
                 22.0,
             )
+            painter.setPen(QColor(0, 0, 0, 160))
+            painter.drawText(
+                done_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                "✓ Done",
+            )
+            painter.setPen(QColor(52, 211, 153, 255))  # Emerald green
             painter.drawText(done_rect, Qt.AlignmentFlag.AlignCenter, "✓ Done")
 
             font_res = QFont()
             font_res.setPointSize(9)
             font_res.setWeight(QFont.Weight.DemiBold)
             painter.setFont(font_res)
-            painter.setPen(QColor(240, 245, 255, 240))
             res_rect = QRectF(
                 center_x - center_card_r + 8.0,
                 center_y + 6.0,
                 (center_card_r - 8.0) * 2,
                 20.0,
             )
+            painter.setPen(QColor(0, 0, 0, 140))
+            painter.drawText(
+                res_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                self.result_message or "Complete",
+            )
+            painter.setPen(QColor(240, 245, 255, 240))
             painter.drawText(
                 res_rect,
                 Qt.AlignmentFlag.AlignCenter,
@@ -1025,7 +1101,6 @@ class DonutWindow(QWidget):
             font_err_title.setPointSize(10)
             font_err_title.setBold(True)
             painter.setFont(font_err_title)
-            painter.setPen(QColor(251, 191, 36, 255))  # Amber
             err_title_rect = QRectF(
                 center_x - center_card_r + 8.0,
                 center_y - 36.0,
@@ -1042,6 +1117,13 @@ class DonutWindow(QWidget):
                 elif "not found" in err_lower:
                     title_text = "File not found"
 
+            painter.setPen(QColor(0, 0, 0, 160))
+            painter.drawText(
+                err_title_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                title_text,
+            )
+            painter.setPen(QColor(251, 191, 36, 255))  # Amber
             painter.drawText(
                 err_title_rect,
                 Qt.AlignmentFlag.AlignCenter,
@@ -1051,7 +1133,6 @@ class DonutWindow(QWidget):
             font_err_msg = QFont()
             font_err_msg.setPointSize(8)
             painter.setFont(font_err_msg)
-            painter.setPen(QColor(220, 225, 235, 220))
 
             fm = QFontMetrics(font_err_msg)
             summary_err = self.failure_error or "Cannot shrink"
@@ -1076,6 +1157,13 @@ class DonutWindow(QWidget):
                 (center_card_r - 6.0) * 2,
                 18.0,
             )
+            painter.setPen(QColor(0, 0, 0, 140))
+            painter.drawText(
+                msg_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                elided_err,
+            )
+            painter.setPen(QColor(220, 225, 235, 220))
             painter.drawText(msg_rect, Qt.AlignmentFlag.AlignCenter, elided_err)
 
             if self.retry_target_bytes is not None:
@@ -1108,18 +1196,19 @@ class DonutWindow(QWidget):
                 self._retry_rect = None
 
         else:
-            # Idle state: thumbnail, filename, current file size / hover prediction
-            thumb_top = center_y - 48.0
+            # Idle state: balanced thumbnail, filename, and size / prediction
+            max_thumb = int(min(46, center_card_r * 0.63))
+            thumb_top = center_y - float(max_thumb)
             if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
-                tw = min(54, self.thumbnail_pixmap.width())
-                th = min(54, self.thumbnail_pixmap.height())
+                tw = min(max_thumb, self.thumbnail_pixmap.width())
+                th = min(max_thumb, self.thumbnail_pixmap.height())
                 tx = center_x - (tw / 2.0)
-                ty = thumb_top + (27.0 - th / 2.0)
+                ty = thumb_top + ((max_thumb / 2.0) - (th / 2.0))
 
                 # Soft drop shadow behind thumbnail
                 shadow_rect = QRectF(tx - 2.0, ty + 2.0, tw + 4.0, th + 4.0)
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(0, 0, 0, 110))
+                painter.setBrush(QColor(0, 0, 0, 120))
                 painter.drawRoundedRect(shadow_rect, 10.0, 10.0)
 
                 # Rounded clip for thumbnail
@@ -1145,7 +1234,13 @@ class DonutWindow(QWidget):
                 painter.drawRoundedRect(QRectF(tx, ty, tw, th), 8.0, 8.0)
             else:
                 # File icon placeholder with soft shadow
-                icon_rect = QRectF(center_x - 14.0, thumb_top + 4.0, 28.0, 36.0)
+                icon_w, icon_h = 26.0, 34.0
+                icon_rect = QRectF(
+                    center_x - (icon_w / 2.0),
+                    thumb_top + ((max_thumb - icon_h) / 2.0),
+                    icon_w,
+                    icon_h,
+                )
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(0, 0, 0, 90))
                 painter.drawRoundedRect(icon_rect.adjusted(-1, 2, 1, 2), 4.0, 4.0)
@@ -1154,28 +1249,39 @@ class DonutWindow(QWidget):
                 painter.setBrush(QColor(39, 39, 42, 200))
                 painter.drawRoundedRect(icon_rect, 4.0, 4.0)
 
-            # Filename: increased font size (10pt) and bold weight
+            # Filename: adaptive font sizing & bold weight with soft text shadow
             font_name = QFont()
-            font_name.setPointSize(10)
-            font_name.setBold(True)
+            if len(self.file_name) > 22:
+                font_name.setPointSize(9)
+                font_name.setWeight(QFont.Weight.DemiBold)
+            else:
+                font_name.setPointSize(10)
+                font_name.setBold(True)
             painter.setFont(font_name)
-            painter.setPen(QColor(255, 255, 255, 250))
 
             fm = QFontMetrics(font_name)
+            name_available_w = int((center_card_r - 6.0) * 2)
             elided_name = fm.elidedText(
                 self.file_name,
                 Qt.TextElideMode.ElideMiddle,
-                int(center_card_r * 2 - 16),
+                name_available_w,
             )
             name_rect = QRectF(
-                center_x - center_card_r + 8.0,
-                center_y + 13.0,
-                (center_card_r - 8.0) * 2,
+                center_x - center_card_r + 6.0,
+                center_y + 7.0,
+                (center_card_r - 6.0) * 2,
                 18.0,
             )
+            painter.setPen(QColor(0, 0, 0, 180))
+            painter.drawText(
+                name_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                elided_name,
+            )
+            painter.setPen(QColor(255, 255, 255, 250))
             painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
 
-            # File size or prediction: increased font size (9pt) and demibold weight
+            # File size or prediction: 9pt demibold with soft text shadow
             font_size = QFont()
             font_size.setPointSize(9)
             font_size.setWeight(QFont.Weight.DemiBold)
@@ -1183,22 +1289,27 @@ class DonutWindow(QWidget):
 
             if self._current_prediction is not None:
                 if self._current_prediction.ok:
-                    # Vibrant cyan-white accent for valid prediction
-                    painter.setPen(QColor(165, 225, 255, 255))
+                    size_color = QColor(165, 225, 255, 255)
                 else:
-                    # Soft amber accent for impossible target
-                    painter.setPen(QColor(251, 191, 36, 255))
+                    size_color = QColor(251, 191, 36, 255)
                 display_text = self._current_prediction.text
             else:
-                painter.setPen(QColor(210, 215, 225, 240))
+                size_color = QColor(210, 215, 225, 240)
                 display_text = self.file_size_text
 
             size_rect = QRectF(
-                center_x - center_card_r + 8.0,
-                center_y + 32.0,
-                (center_card_r - 8.0) * 2,
+                center_x - center_card_r + 6.0,
+                center_y + 29.0,
+                (center_card_r - 6.0) * 2,
                 18.0,
             )
+            painter.setPen(QColor(0, 0, 0, 160))
+            painter.drawText(
+                size_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                display_text,
+            )
+            painter.setPen(size_color)
             painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, display_text)
 
         painter.end()
