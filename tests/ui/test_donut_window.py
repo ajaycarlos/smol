@@ -1,5 +1,6 @@
 import math
 import os
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -8,8 +9,8 @@ import pytest
 # Ensure Qt can run in headless test environments
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QKeyEvent, QMouseEvent, QPixmap
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
+from PySide6.QtGui import QDropEvent, QKeyEvent, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from smol.ui.donut_window import DonutWindow
@@ -353,4 +354,185 @@ def test_donut_window_hover_dimmed_segment_no_prediction(qapp, sample_file_30kb)
 
     # Dimmed segment must NOT trigger a prediction
     assert getattr(window, "_current_prediction", None) is None
+    window.close()
+
+
+def wait_for_worker(window: DonutWindow, timeout_ms: int = 5000) -> bool:
+    import time
+
+    start = time.time()
+    while (
+        getattr(window, "_shrink_worker", None) is not None
+        and window._shrink_worker.isRunning()
+    ):
+        QApplication.processEvents()
+        time.sleep(0.01)
+        if (time.time() - start) * 1000 > timeout_ms:
+            return False
+    for _ in range(5):
+        QApplication.processEvents()
+    return True
+
+
+def test_donut_click_starts_worker_and_shows_working_state(qapp, samples_dir, tmp_path):
+    portrait = tmp_path / "portrait.jpg"
+    shutil.copy(samples_dir / "portrait.jpg", portrait)
+    window = DonutWindow([portrait])
+    window.show()
+
+    # Segment 2 is "100 KB"
+    center = QPointF(window.width() / 2.0, window.height() / 2.0)
+    ax, ay = window.geometry_calc.label_anchors[2]
+    click_pos = center + QPointF(ax, ay)
+
+    # Click segment 2
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        click_pos,
+        click_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.mousePressEvent(event)
+
+    assert window.state == "working"
+    assert window._shrink_worker is not None
+    assert (
+        "Shrinking" in window.center_status_text
+        or "Working" in window.center_status_text
+    )
+
+    wait_for_worker(window)
+    window.close()
+
+
+def test_donut_shows_plain_result_message_on_success(qapp, samples_dir, tmp_path):
+    portrait = tmp_path / "portrait.jpg"
+    shutil.copy(samples_dir / "portrait.jpg", portrait)
+    window = DonutWindow([portrait])
+    window.show()
+
+    # Click segment 2 ("100 KB")
+    center = QPointF(window.width() / 2.0, window.height() / 2.0)
+    ax, ay = window.geometry_calc.label_anchors[2]
+    click_pos = center + QPointF(ax, ay)
+
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        click_pos,
+        click_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.mousePressEvent(event)
+
+    wait_for_worker(window)
+
+    assert window.state == "success"
+    assert window.result_message is not None
+    assert "KB" in window.result_message or "MB" in window.result_message
+    assert window.last_results is not None
+    assert len(window.last_results) == 1
+    _src, res = window.last_results[0]
+    assert res.ok is True
+    assert res.output_path is not None
+    assert res.output_path.exists()
+    window.close()
+
+
+def test_donut_accepts_file_drop_on_segment(qapp, samples_dir, tmp_path):
+    portrait = tmp_path / "portrait.jpg"
+    shutil.copy(samples_dir / "portrait.jpg", portrait)
+    window = DonutWindow([])
+    window.show()
+
+    # Drop onto segment 2 ("100 KB")
+    center = QPointF(window.width() / 2.0, window.height() / 2.0)
+    ax, ay = window.geometry_calc.label_anchors[2]
+    drop_pos = center + QPointF(ax, ay)
+
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(portrait))])
+
+    drop_event = QDropEvent(
+        QPoint(int(drop_pos.x()), int(drop_pos.y())),
+        Qt.DropAction.CopyAction,
+        mime_data,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    window.dropEvent(drop_event)
+
+    assert drop_event.isAccepted()
+    assert window.file_paths == [portrait]
+    assert window.state == "working"
+    assert window._shrink_worker is not None
+
+    wait_for_worker(window)
+    assert window.state == "success"
+    window.close()
+
+
+def test_donut_honest_failure_and_retry_option(qapp, samples_dir, tmp_path):
+    noise = tmp_path / "noise_cannot_shrink.jpg"
+    shutil.copy(samples_dir / "noise_cannot_shrink.jpg", noise)
+    window = DonutWindow([noise])
+    window.show()
+
+    # Trigger 5 KB target which is impossible
+    window.start_shrink(5_000)
+
+    wait_for_worker(window)
+
+    assert window.state == "failure"
+    assert window.failure_error is not None
+    assert "Smallest I can make this is" in window.failure_error
+    assert window.retry_target_bytes is not None
+    assert window.retry_target_bytes > 5_000
+
+    # Trigger retry at smallest possible target
+    window.retry_smallest()
+    assert window.state == "working"
+    wait_for_worker(window)
+    assert window.state == "success"
+    window.close()
+
+
+def test_donut_click_retry_button_triggers_shrink(qapp, samples_dir, tmp_path):
+    noise = tmp_path / "noise_cannot_shrink.jpg"
+    shutil.copy(samples_dir / "noise_cannot_shrink.jpg", noise)
+    window = DonutWindow([noise])
+    window.show()
+
+    # Trigger impossible target
+    window.start_shrink(5_000)
+    wait_for_worker(window)
+
+    assert window.state == "failure"
+    assert window.retry_target_bytes is not None
+
+    # Render to populate _retry_rect in paintEvent
+    pixmap = QPixmap(window.size())
+    pixmap.fill(Qt.GlobalColor.transparent)
+    window.render(pixmap)
+    assert window._retry_rect is not None
+
+    # Click on the center of the retry button
+    retry_click_pos = window._retry_rect.center()
+    click_event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        retry_click_pos,
+        retry_click_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    window.mousePressEvent(click_event)
+
+    assert window.state == "working"
+    wait_for_worker(window)
+    assert window.state == "success"
     window.close()

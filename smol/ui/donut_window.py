@@ -10,19 +10,28 @@ Pressing Esc or clicking outside closes the overlay.
 from __future__ import annotations
 
 import math
+import os
+import re
+import urllib.parse
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import (
+    QMimeData,
     QPointF,
     QRectF,
     Qt,
+    Signal,
 )
 from PySide6.QtGui import (
     QBrush,
     QColor,
     QCursor,
+    QDragEnterEvent,
+    QDragLeaveEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QFont,
     QFontMetrics,
     QImage,
@@ -38,9 +47,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
-from smol.core.size import format_size
+from smol.core.result import Result
+from smol.core.size import format_size, parse_size
 from smol.ui.donut_geometry import DonutGeometry
 from smol.ui.prediction import Prediction, PredictionService
+from smol.ui.worker import ShrinkWorker
 
 DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
     ("20 KB", 20_000),
@@ -136,8 +147,16 @@ def _apply_blur(pixmap: QPixmap, radius: int = 14) -> QPixmap:
         )
 
 
+_active_shrink_workers: set[ShrinkWorker] = set()
+
+
 class DonutWindow(QWidget):
     """Frameless translucent always-on-top donut menu centered on the cursor."""
+
+    shrink_started = Signal(int)
+    shrink_progress = Signal(int, int, str)
+    shrink_finished = Signal(list)
+    shrink_failed = Signal(str, object)
 
     def __init__(
         self,
@@ -154,6 +173,15 @@ class DonutWindow(QWidget):
         self.overlay_size = size
         self.on_select = on_select
         self.selected_size: str | None = None
+
+        self.state: str = "idle"  # "idle" | "working" | "success" | "failure"
+        self.center_status_text: str = ""
+        self.result_message: str | None = None
+        self.last_results: list[tuple[Path, Result]] | None = None
+        self.failure_error: str | None = None
+        self.retry_target_bytes: int | None = None
+        self._retry_rect: QRectF | None = None
+        self._shrink_worker: ShrinkWorker | None = None
 
         self._hovered_idx: int | None = None
         self._current_prediction: Prediction | None = None
@@ -195,7 +223,11 @@ class DonutWindow(QWidget):
             except OSError:
                 continue
 
-        if len(self.file_paths) == 1:
+        if not self.file_paths:
+            self.file_name = "Drop files here"
+            self.file_size_text = ""
+            self.thumbnail_pixmap = None
+        elif len(self.file_paths) == 1:
             first = self.file_paths[0]
             self.file_name = first.name
             self.file_size_text = format_size(self.total_bytes, spaced=True)
@@ -211,8 +243,8 @@ class DonutWindow(QWidget):
         self.segments: list[SegmentItem] = []
         for idx, (label, target_bytes) in enumerate(DEFAULT_SEGMENT_CONFIG):
             # Segments larger than the file are dimmed and unclickable
-            # For multiple files, we check against the largest file
-            if target_bytes is None:
+            # If no files or zero size, keep all segments enabled
+            if not self.file_paths or self.max_file_bytes == 0 or target_bytes is None:
                 enabled = True
             else:
                 enabled = target_bytes <= self.max_file_bytes
@@ -227,7 +259,7 @@ class DonutWindow(QWidget):
             )
 
     def _configure_window(self) -> None:
-        """Configure Qt window flags, attributes, opacity, and tracking."""
+        """Configure Qt window flags, attributes, opacity, tracking, and drops."""
         self.setFixedSize(self.overlay_size, self.overlay_size)
 
         # Frameless, stays on top, tool window
@@ -248,6 +280,9 @@ class DonutWindow(QWidget):
 
         # Mouse tracking for hover highlights
         self.setMouseTracking(True)
+
+        # Accept file drag-and-drop
+        self.setAcceptDrops(True)
 
     def capture_desktop_background(self) -> None:
         """Capture and blur the desktop area behind the window for frosted glass."""
@@ -316,9 +351,14 @@ class DonutWindow(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Update hover state on segments and trigger debounced prediction."""
+        if self.state == "working":
+            event.accept()
+            return
+
         center = self.rect().center()
-        dx = event.position().x() - center.x()
-        dy = event.position().y() - center.y()
+        pos = event.position() if hasattr(event, "position") else event.pos()
+        dx = pos.x() - center.x()
+        dy = pos.y() - center.y()
 
         idx = self.geometry_calc.segment_at(dx, dy)
         if idx != self._hovered_idx:
@@ -328,7 +368,11 @@ class DonutWindow(QWidget):
                 self._current_prediction = None
             else:
                 item = self.segments[idx]
-                if not item.enabled or item.target_bytes is None:
+                if (
+                    not item.enabled
+                    or item.target_bytes is None
+                    or self.state != "idle"
+                ):
                     self.prediction_service.cancel()
                     self._current_prediction = None
                 else:
@@ -350,40 +394,259 @@ class DonutWindow(QWidget):
         """Clean up background workers on close."""
         self.prediction_service.cancel()
         self.prediction_service.wait_for_workers(timeout_ms=300)
+        if self._shrink_worker is not None and self._shrink_worker.isRunning():
+            self._shrink_worker.cancel()
+            self._shrink_worker.wait(300)
         super().closeEvent(event)
 
+    def _parse_drop_uris(self, mime_data: QMimeData | object) -> list[Path]:
+        """Extract existing local Path objects from drag-and-drop MIME data."""
+        paths: list[Path] = []
+        if hasattr(mime_data, "urls") and mime_data.urls():
+            for url in mime_data.urls():
+                if url.isLocalFile():
+                    p = Path(url.toLocalFile())
+                    if p.exists():
+                        paths.append(p)
+                else:
+                    raw = url.toString()
+                    if raw.startswith("file://"):
+                        p = Path(urllib.parse.unquote(raw[7:]))
+                        if p.exists():
+                            paths.append(p)
+        elif hasattr(mime_data, "text") and mime_data.text():
+            for line in mime_data.text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("file://"):
+                    p = Path(urllib.parse.unquote(line[7:]))
+                    if p.exists():
+                        paths.append(p)
+                elif os.path.isabs(line):
+                    p = Path(line)
+                    if p.exists():
+                        paths.append(p)
+        return paths
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        """Accept drag if it contains URLs or text/uri-list."""
+        mime = event.mimeData()
+        if mime.hasUrls() or mime.hasFormat("text/uri-list"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        """Track segment under cursor during drag."""
+        center = self.rect().center()
+        pos = event.position() if hasattr(event, "position") else event.pos()
+        dx = pos.x() - center.x()
+        dy = pos.y() - center.y()
+        idx = self.geometry_calc.segment_at(dx, dy)
+        if idx != self._hovered_idx:
+            self._hovered_idx = idx
+            self.update()
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        """Clear drag hover state."""
+        self._hovered_idx = None
+        self.update()
+        event.accept()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Handle file drops onto a donut segment."""
+        center = self.rect().center()
+        pos = event.position() if hasattr(event, "position") else event.pos()
+        dx = pos.x() - center.x()
+        dy = pos.y() - center.y()
+        idx = self.geometry_calc.segment_at(dx, dy)
+
+        dropped_files = self._parse_drop_uris(event.mimeData())
+        if not dropped_files:
+            event.ignore()
+            return
+
+        if idx is not None:
+            item = self.segments[idx]
+            if item.target_bytes is not None:
+                event.acceptProposedAction()
+                self.file_paths = dropped_files
+                self._init_file_data()
+                self._init_segments()
+                self.selected_size = item.label
+                if self.on_select:
+                    self.on_select(item.label)
+                self.start_shrink(item.target_bytes)
+                return
+
+        event.ignore()
+
+    def start_shrink(
+        self,
+        target_bytes: int,
+        files: Sequence[Path | str] | None = None,
+    ) -> None:
+        """Start the shrink worker thread for chosen target_bytes."""
+        if self.state == "working":
+            return
+
+        if files is not None:
+            self.file_paths = [Path(f) for f in files]
+            self._init_file_data()
+            self._init_segments()
+
+        if not self.file_paths:
+            return
+
+        self.prediction_service.cancel()
+        self._current_prediction = None
+
+        self.state = "working"
+        if len(self.file_paths) > 1:
+            self.center_status_text = f"Shrinking (1/{len(self.file_paths)})..."
+        else:
+            self.center_status_text = "Shrinking..."
+
+        self.result_message = None
+        self.failure_error = None
+        self.retry_target_bytes = None
+        self._retry_rect = None
+
+        self.shrink_started.emit(target_bytes)
+
+        worker = ShrinkWorker(
+            files=self.file_paths,
+            target_bytes=target_bytes,
+            parent=None,
+        )
+        self._shrink_worker = worker
+        _active_shrink_workers.add(worker)
+        worker.finished.connect(lambda: _active_shrink_workers.discard(worker))
+        worker.progress.connect(self._on_shrink_progress)
+        worker.results_ready.connect(self._on_shrink_finished)
+        worker.start()
+        self.update()
+
+    def _on_shrink_progress(self, cur: int, total: int, name: str) -> None:
+        """Handle worker progress updates."""
+        if total > 1:
+            self.center_status_text = f"Shrinking ({cur}/{total})..."
+        else:
+            self.center_status_text = "Shrinking..."
+        self.shrink_progress.emit(cur, total, name)
+        self.update()
+
+    def _on_shrink_finished(self, results: list[tuple[Path, Result]]) -> None:
+        """Handle completion of background shrink job."""
+        self.last_results = results
+
+        all_ok = all(res.ok for _, res in results)
+        if all_ok:
+            self.state = "success"
+            if len(results) == 1:
+                _src, res = results[0]
+                orig_sz = format_size(res.original_bytes, spaced=True)
+                final_sz = format_size(res.final_bytes, spaced=True)
+                self.result_message = f"{orig_sz} → {final_sz}"
+            else:
+                self.result_message = f"{len(results)} files shrunk"
+            self.shrink_finished.emit(results)
+        else:
+            self.state = "failure"
+            failed_res = next(res for _, res in results if not res.ok)
+            self.failure_error = failed_res.error or "Compression failed"
+            m = re.search(r"Smallest[^~]*~([0-9.]+\s*[A-Za-z]+)", self.failure_error)
+            if m:
+                try:
+                    self.retry_target_bytes = parse_size(m.group(1).strip())
+                except (ValueError, TypeError):
+                    self.retry_target_bytes = None
+            else:
+                self.retry_target_bytes = None
+
+            self.shrink_failed.emit(self.failure_error, self.retry_target_bytes)
+
+        self.update()
+
+    def retry_smallest(self) -> None:
+        """Retry shrinking at the smallest achievable target size."""
+        if self.retry_target_bytes is not None:
+            self.start_shrink(self.retry_target_bytes)
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Handle clicks on segments or outside."""
+        """Handle clicks on segments, retry option, or outside."""
         if event.button() != Qt.MouseButton.LeftButton:
             return
 
         center = self.rect().center()
-        dx = event.position().x() - center.x()
-        dy = event.position().y() - center.y()
+        pos = event.position() if hasattr(event, "position") else event.pos()
+        dx = pos.x() - center.x()
+        dy = pos.y() - center.y()
+        r = math.hypot(dx, dy)
 
-        idx = self.geometry_calc.segment_at(dx, dy)
-        if idx is None:
-            # Check if clicked outside outer radius
-            r = math.hypot(dx, dy)
+        if self.state == "working":
+            event.accept()
+            return
+
+        if self.state == "failure":
+            if (self._retry_rect and self._retry_rect.contains(pos)) or (
+                r <= self.geometry_calc.inner_radius and self.retry_target_bytes
+            ):
+                self.retry_smallest()
+                event.accept()
+                return
             if r > self.geometry_calc.outer_radius:
                 self.close()
                 event.accept()
                 return
-            # Center hole or gap: ignore
+            idx = self.geometry_calc.segment_at(dx, dy)
+            if idx is not None:
+                item = self.segments[idx]
+                if item.enabled and item.target_bytes is not None:
+                    self.start_shrink(item.target_bytes)
+                    event.accept()
+                    return
+            return
+
+        if self.state == "success":
+            if r > self.geometry_calc.outer_radius:
+                self.close()
+                event.accept()
+                return
+            idx = self.geometry_calc.segment_at(dx, dy)
+            if idx is not None:
+                item = self.segments[idx]
+                if item.enabled and item.target_bytes is not None:
+                    self.start_shrink(item.target_bytes)
+                    event.accept()
+                    return
+            return
+
+        # Idle state
+        idx = self.geometry_calc.segment_at(dx, dy)
+        if idx is None:
+            if r > self.geometry_calc.outer_radius:
+                self.close()
+                event.accept()
+                return
             return
 
         item = self.segments[idx]
         if not item.enabled:
-            # Dimmed segment is unclickable
             return
 
-        # Active segment selected
         self.selected_size = item.label
         if self.on_select:
             self.on_select(item.label)
 
-        self.close()
-        event.accept()
+        if item.target_bytes is not None:
+            self.start_shrink(item.target_bytes)
+            event.accept()
+        else:
+            self.close()
+            event.accept()
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """Render liquid glass donut segments, highlights, and center card."""
@@ -543,97 +806,233 @@ class DonutWindow(QWidget):
         painter.setPen(QPen(QColor(255, 255, 255, 40), 1.2))
         painter.drawEllipse(card_rect)
 
-        # Thumbnail with soft drop shadow
-        thumb_top = center_y - 48.0
-        if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
-            tw = min(54, self.thumbnail_pixmap.width())
-            th = min(54, self.thumbnail_pixmap.height())
-            tx = center_x - (tw / 2.0)
-            ty = thumb_top + (27.0 - th / 2.0)
-
-            # Soft drop shadow behind thumbnail
-            shadow_rect = QRectF(tx - 2.0, ty + 2.0, tw + 4.0, th + 4.0)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 110))
-            painter.drawRoundedRect(shadow_rect, 10.0, 10.0)
-
-            # Rounded clip for thumbnail
-            painter.save()
-            clip_path = QPainterPath()
-            clip_path.addRoundedRect(QRectF(tx, ty, tw, th), 8.0, 8.0)
-            painter.setClipPath(clip_path)
-            painter.drawPixmap(
-                int(tx),
-                int(ty),
-                self.thumbnail_pixmap.scaled(
-                    tw,
-                    th,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                ),
+        if self.state == "working":
+            # Simple working state in centre
+            font_work = QFont()
+            font_work.setPointSize(11)
+            font_work.setBold(True)
+            painter.setFont(font_work)
+            painter.setPen(QColor(165, 225, 255, 255))
+            work_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y - 18.0,
+                (center_card_r - 8.0) * 2,
+                22.0,
             )
-            painter.restore()
+            painter.drawText(work_rect, Qt.AlignmentFlag.AlignCenter, "Working…")
 
-            # Delicate border around thumbnail
-            painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(QRectF(tx, ty, tw, th), 8.0, 8.0)
-        else:
-            # File icon placeholder with soft shadow
-            icon_rect = QRectF(center_x - 14.0, thumb_top + 4.0, 28.0, 36.0)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 90))
-            painter.drawRoundedRect(icon_rect.adjusted(-1, 2, 1, 2), 4.0, 4.0)
+            font_sub = QFont()
+            font_sub.setPointSize(9)
+            painter.setFont(font_sub)
+            painter.setPen(QColor(200, 210, 225, 230))
+            sub_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y + 8.0,
+                (center_card_r - 8.0) * 2,
+                18.0,
+            )
+            painter.drawText(
+                sub_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                self.center_status_text or "Shrinking...",
+            )
 
-            painter.setPen(QPen(QColor(161, 161, 170, 220), 1.5))
-            painter.setBrush(QColor(39, 39, 42, 200))
-            painter.drawRoundedRect(icon_rect, 4.0, 4.0)
+        elif self.state == "success":
+            # Plain result message in centre
+            font_done = QFont()
+            font_done.setPointSize(12)
+            font_done.setBold(True)
+            painter.setFont(font_done)
+            painter.setPen(QColor(52, 211, 153, 255))  # Emerald green
+            done_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y - 20.0,
+                (center_card_r - 8.0) * 2,
+                22.0,
+            )
+            painter.drawText(done_rect, Qt.AlignmentFlag.AlignCenter, "✓ Done")
 
-        # Filename: increased font size (10pt) and bold weight
-        font_name = QFont()
-        font_name.setPointSize(10)
-        font_name.setBold(True)
-        painter.setFont(font_name)
-        painter.setPen(QColor(255, 255, 255, 250))
+            font_res = QFont()
+            font_res.setPointSize(9)
+            font_res.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font_res)
+            painter.setPen(QColor(240, 245, 255, 240))
+            res_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y + 6.0,
+                (center_card_r - 8.0) * 2,
+                20.0,
+            )
+            painter.drawText(
+                res_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                self.result_message or "Complete",
+            )
 
-        fm = QFontMetrics(font_name)
-        elided_name = fm.elidedText(
-            self.file_name,
-            Qt.TextElideMode.ElideMiddle,
-            int(center_card_r * 2 - 16),
-        )
-        name_rect = QRectF(
-            center_x - center_card_r + 8.0,
-            center_y + 13.0,
-            (center_card_r - 8.0) * 2,
-            18.0,
-        )
-        painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
+        elif self.state == "failure":
+            # Honest engine message and retry option
+            font_err_title = QFont()
+            font_err_title.setPointSize(10)
+            font_err_title.setBold(True)
+            painter.setFont(font_err_title)
+            painter.setPen(QColor(251, 191, 36, 255))  # Amber
+            err_title_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y - 36.0,
+                (center_card_r - 8.0) * 2,
+                18.0,
+            )
+            painter.drawText(
+                err_title_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                "Target too small",
+            )
 
-        # File size or prediction: increased font size (9pt) and demibold weight
-        font_size = QFont()
-        font_size.setPointSize(9)
-        font_size.setWeight(QFont.Weight.DemiBold)
-        painter.setFont(font_size)
+            font_err_msg = QFont()
+            font_err_msg.setPointSize(8)
+            painter.setFont(font_err_msg)
+            painter.setPen(QColor(220, 225, 235, 220))
 
-        if self._current_prediction is not None:
-            if self._current_prediction.ok:
-                # Vibrant cyan-white accent for valid prediction
-                painter.setPen(QColor(165, 225, 255, 255))
+            fm = QFontMetrics(font_err_msg)
+            summary_err = self.failure_error or "Cannot shrink"
+            if "Smallest" in summary_err:
+                m = re.search(r"(Smallest [^;]+)", summary_err)
+                if m:
+                    summary_err = m.group(1)
+            elided_err = fm.elidedText(
+                summary_err,
+                Qt.TextElideMode.ElideMiddle,
+                int(center_card_r * 2 - 12),
+            )
+            msg_rect = QRectF(
+                center_x - center_card_r + 6.0,
+                center_y - 14.0,
+                (center_card_r - 6.0) * 2,
+                18.0,
+            )
+            painter.drawText(msg_rect, Qt.AlignmentFlag.AlignCenter, elided_err)
+
+            if self.retry_target_bytes is not None:
+                sz_str = format_size(self.retry_target_bytes, spaced=True)
+                retry_text = f"Retry ({sz_str})"
+                btn_w = min(110.0, center_card_r * 2 - 16.0)
+                btn_h = 24.0
+                self._retry_rect = QRectF(
+                    center_x - btn_w / 2.0,
+                    center_y + 12.0,
+                    btn_w,
+                    btn_h,
+                )
+
+                painter.setBrush(QColor(245, 158, 11, 45))
+                painter.setPen(QPen(QColor(245, 158, 11, 180), 1.2))
+                painter.drawRoundedRect(self._retry_rect, 6.0, 6.0)
+
+                font_btn = QFont()
+                font_btn.setPointSize(8)
+                font_btn.setBold(True)
+                painter.setFont(font_btn)
+                painter.setPen(QColor(254, 243, 199, 255))
+                painter.drawText(
+                    self._retry_rect,
+                    Qt.AlignmentFlag.AlignCenter,
+                    retry_text,
+                )
             else:
-                # Soft amber accent for impossible target
-                painter.setPen(QColor(251, 191, 36, 255))
-            display_text = self._current_prediction.text
-        else:
-            painter.setPen(QColor(210, 215, 225, 240))
-            display_text = self.file_size_text
+                self._retry_rect = None
 
-        size_rect = QRectF(
-            center_x - center_card_r + 8.0,
-            center_y + 32.0,
-            (center_card_r - 8.0) * 2,
-            18.0,
-        )
-        painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, display_text)
+        else:
+            # Idle state: thumbnail, filename, current file size / hover prediction
+            thumb_top = center_y - 48.0
+            if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
+                tw = min(54, self.thumbnail_pixmap.width())
+                th = min(54, self.thumbnail_pixmap.height())
+                tx = center_x - (tw / 2.0)
+                ty = thumb_top + (27.0 - th / 2.0)
+
+                # Soft drop shadow behind thumbnail
+                shadow_rect = QRectF(tx - 2.0, ty + 2.0, tw + 4.0, th + 4.0)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, 110))
+                painter.drawRoundedRect(shadow_rect, 10.0, 10.0)
+
+                # Rounded clip for thumbnail
+                painter.save()
+                clip_path = QPainterPath()
+                clip_path.addRoundedRect(QRectF(tx, ty, tw, th), 8.0, 8.0)
+                painter.setClipPath(clip_path)
+                painter.drawPixmap(
+                    int(tx),
+                    int(ty),
+                    self.thumbnail_pixmap.scaled(
+                        tw,
+                        th,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    ),
+                )
+                painter.restore()
+
+                # Delicate border around thumbnail
+                painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(QRectF(tx, ty, tw, th), 8.0, 8.0)
+            else:
+                # File icon placeholder with soft shadow
+                icon_rect = QRectF(center_x - 14.0, thumb_top + 4.0, 28.0, 36.0)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, 90))
+                painter.drawRoundedRect(icon_rect.adjusted(-1, 2, 1, 2), 4.0, 4.0)
+
+                painter.setPen(QPen(QColor(161, 161, 170, 220), 1.5))
+                painter.setBrush(QColor(39, 39, 42, 200))
+                painter.drawRoundedRect(icon_rect, 4.0, 4.0)
+
+            # Filename: increased font size (10pt) and bold weight
+            font_name = QFont()
+            font_name.setPointSize(10)
+            font_name.setBold(True)
+            painter.setFont(font_name)
+            painter.setPen(QColor(255, 255, 255, 250))
+
+            fm = QFontMetrics(font_name)
+            elided_name = fm.elidedText(
+                self.file_name,
+                Qt.TextElideMode.ElideMiddle,
+                int(center_card_r * 2 - 16),
+            )
+            name_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y + 13.0,
+                (center_card_r - 8.0) * 2,
+                18.0,
+            )
+            painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
+
+            # File size or prediction: increased font size (9pt) and demibold weight
+            font_size = QFont()
+            font_size.setPointSize(9)
+            font_size.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font_size)
+
+            if self._current_prediction is not None:
+                if self._current_prediction.ok:
+                    # Vibrant cyan-white accent for valid prediction
+                    painter.setPen(QColor(165, 225, 255, 255))
+                else:
+                    # Soft amber accent for impossible target
+                    painter.setPen(QColor(251, 191, 36, 255))
+                display_text = self._current_prediction.text
+            else:
+                painter.setPen(QColor(210, 215, 225, 240))
+                display_text = self.file_size_text
+
+            size_rect = QRectF(
+                center_x - center_card_r + 8.0,
+                center_y + 32.0,
+                (center_card_r - 8.0) * 2,
+                18.0,
+            )
+            painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, display_text)
 
         painter.end()

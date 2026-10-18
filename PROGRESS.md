@@ -135,8 +135,16 @@ M3 — Donut UI, standalone (In Progress).
   - Added unit test suite in `tests/ui/test_prediction.py` (6 tests) and extended `tests/ui/test_donut_window.py` (2 new tests) validating debounce timing, cancellation, cache hits, and center card rendering.
   - VERIFY: Hovering shows prediction within ~0.27s (< 1s target); event loop processes smoothly without window freeze; 193 tests pass; ruff clean.
 
+- Implement Donut engine execution on segment click and drop with worker thread, center states, and failure retry (smol/ui/worker.py, smol/ui/donut_window.py):
+  - Created `ShrinkWorker(QThread)` running compression jobs off the UI thread emitting progress and results signals without blocking the Qt event loop.
+  - Added file drag-and-drop (`setAcceptDrops(True)`) accepting `text/uri-list` file drops onto active segments so the daemon or user can drop files directly onto targets.
+  - Implemented center card state transitions: `working` (displays "Working…" and progress status), `success` (displays "✓ Done" with before/after size or batch summary), and `failure` (displays honest engine message and a clickable "Retry (at smallest)" button).
+  - Connected segment clicks and drop events to start background shrink jobs and re-run on failure retry at smallest achievable size.
+  - Added unit test suite in `tests/ui/test_shrink_worker.py` (3 tests) and extended `tests/ui/test_donut_window.py` (5 tests).
+  - VERIFY: Clicking segment and dropping file triggers worker thread without freezing UI; honest failure displays retry option and re-runs cleanly; 201 tests pass; ruff clean.
+
 ## Next
-- Milestone M3: Custom size input popup and engine invocation on drop/click.
+- Milestone M3: Custom size input popup and hold-key daemon summoning integration (M4).
 
 
 ## Decisions
