@@ -9,6 +9,7 @@ Pressing Esc or clicking outside closes the overlay.
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import re
@@ -172,6 +173,66 @@ def _apply_blur(pixmap: QPixmap, radius: int = 14) -> QPixmap:
         )
 
 
+def parse_drop_uris(mime_data: QMimeData | object) -> list[Path]:
+    """Extract existing local Path objects from drag-and-drop MIME data.
+
+    Handles:
+    - QUrl list from mime_data.urls()
+    - text/uri-list from mime_data.data("text/uri-list") or mime_data.text()
+    - file://localhost/ paths
+    - percent-encoded characters (spaces, unicode, UTF-8 sequences)
+    - multiple files across different folders
+    - deduplication while preserving order and verifying file existence.
+    """
+    paths: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_path(p: Path) -> None:
+        try:
+            resolved = p.resolve()
+            if resolved.exists() and resolved not in seen:
+                seen.add(resolved)
+                paths.append(p)
+        except (OSError, ValueError):
+            pass
+
+    def parse_uri_string(s: str) -> None:
+        s = s.strip()
+        if not s or s.startswith("#"):
+            return
+        if s.startswith("file://"):
+            rest = s[7:]
+            if rest.startswith(("localhost/", "localhost")):
+                rest = rest[9:]
+            unquoted = urllib.parse.unquote(rest, encoding="utf-8")
+            add_path(Path(unquoted))
+        elif os.path.isabs(s):
+            add_path(Path(s))
+
+    if hasattr(mime_data, "urls") and mime_data.urls():
+        for url in mime_data.urls():
+            if url.isLocalFile():
+                add_path(Path(url.toLocalFile()))
+            else:
+                raw = url.toString()
+                parse_uri_string(raw)
+
+    raw_text = ""
+    if hasattr(mime_data, "data"):
+        raw_bytes = mime_data.data("text/uri-list")
+        if raw_bytes and hasattr(raw_bytes, "data"):
+            with contextlib.suppress(AttributeError, ValueError, TypeError, OSError):
+                raw_text = bytes(raw_bytes.data()).decode("utf-8", errors="replace")
+    if not raw_text and hasattr(mime_data, "text") and mime_data.text():
+        raw_text = mime_data.text()
+
+    if raw_text:
+        for line in raw_text.splitlines():
+            parse_uri_string(line)
+
+    return paths
+
+
 _active_shrink_workers: set[ShrinkWorker] = set()
 
 
@@ -216,6 +277,8 @@ class DonutWindow(QWidget):
         self.retry_target_bytes: int | None = None
         self._retry_rect: QRectF | None = None
         self._shrink_worker: ShrinkWorker | None = None
+        self._job_queue: list[tuple[int, list[Path]]] = []
+        self._accumulated_results: list[tuple[Path, Result]] = []
 
         self._hovered_idx: int | None = None
         self._current_prediction: Prediction | None = None
@@ -406,12 +469,19 @@ class DonutWindow(QWidget):
             h = self.height()
             self.move(geo.center().x() - (w // 2), geo.center().y() - (h // 2))
 
+    @property
+    def job_queue(self) -> list[tuple[int, list[Path]]]:
+        """Return the current list of queued jobs."""
+        return self._job_queue
+
     def reset_state(self) -> None:
         """Reset overlay to fresh idle state ready for a new summon or drop."""
         if self._shrink_worker is not None and self._shrink_worker.isRunning():
             self._shrink_worker.cancel()
             self._shrink_worker.wait(200)
             self._shrink_worker = None
+        self._job_queue.clear()
+        self._accumulated_results.clear()
         self.state = "idle"
         self.center_status_text = ""
         self.result_message = None
@@ -481,7 +551,7 @@ class DonutWindow(QWidget):
         self._init_segments()
         self.update()
 
-        self.start_shrink(target_bytes, files=files)
+        self.queue_or_start_shrink(target_bytes, files=files)
 
     def _on_custom_cancelled(self) -> None:
         """Handle cancelled custom input."""
@@ -557,33 +627,7 @@ class DonutWindow(QWidget):
 
     def _parse_drop_uris(self, mime_data: QMimeData | object) -> list[Path]:
         """Extract existing local Path objects from drag-and-drop MIME data."""
-        paths: list[Path] = []
-        if hasattr(mime_data, "urls") and mime_data.urls():
-            for url in mime_data.urls():
-                if url.isLocalFile():
-                    p = Path(url.toLocalFile())
-                    if p.exists():
-                        paths.append(p)
-                else:
-                    raw = url.toString()
-                    if raw.startswith("file://"):
-                        p = Path(urllib.parse.unquote(raw[7:]))
-                        if p.exists():
-                            paths.append(p)
-        elif hasattr(mime_data, "text") and mime_data.text():
-            for line in mime_data.text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("file://"):
-                    p = Path(urllib.parse.unquote(line[7:]))
-                    if p.exists():
-                        paths.append(p)
-                elif os.path.isabs(line):
-                    p = Path(line)
-                    if p.exists():
-                        paths.append(p)
-        return paths
+        return parse_drop_uris(mime_data)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         """Accept drag if it contains URLs or text/uri-list."""
@@ -629,13 +673,10 @@ class DonutWindow(QWidget):
             self.drop_received.emit(dropped_files)
             if item.target_bytes is not None:
                 event.acceptProposedAction()
-                self.file_paths = dropped_files
-                self._init_file_data()
-                self._init_segments()
                 self.selected_size = item.label
                 if self.on_select:
                     self.on_select(item.label)
-                self.start_shrink(item.target_bytes)
+                self.queue_or_start_shrink(item.target_bytes, files=dropped_files)
                 return
             else:
                 event.acceptProposedAction()
@@ -647,6 +688,31 @@ class DonutWindow(QWidget):
                 return
 
         event.ignore()
+
+    def queue_or_start_shrink(
+        self,
+        target_bytes: int,
+        files: Sequence[Path | str] | None = None,
+    ) -> None:
+        """Start shrinking or enqueue if a job is currently working."""
+        path_list = (
+            [Path(f) for f in files]
+            if files is not None
+            else list(self.file_paths)
+        )
+        if not path_list:
+            return
+
+        if self.state == "working":
+            self._job_queue.append((target_bytes, path_list))
+            queued_count = len(self._job_queue)
+            base_status = self.center_status_text.split(" (+")[0]
+            self.center_status_text = f"{base_status} (+{queued_count} queued)"
+            self.update()
+            return
+
+        self._accumulated_results = []
+        self.start_shrink(target_bytes, files=path_list)
 
     def start_shrink(
         self,
@@ -716,6 +782,24 @@ class DonutWindow(QWidget):
 
     def _on_shrink_finished(self, results: list[tuple[Path, Result]]) -> None:
         """Handle completion of background shrink job."""
+        if self._job_queue:
+            self._accumulated_results.extend(results)
+            next_target, next_files = self._job_queue.pop(0)
+            self.file_paths = next_files
+            self._init_file_data()
+            self._init_segments()
+            self.state = "idle"
+            self.start_shrink(next_target, files=next_files)
+            if self._job_queue:
+                queued_count = len(self._job_queue)
+                base_status = self.center_status_text.split(" (+")[0]
+                self.center_status_text = f"{base_status} (+{queued_count} queued)"
+                self.update()
+            return
+
+        all_results = self._accumulated_results + results
+        self._accumulated_results = []
+        results = all_results
         self.last_results = results
 
         shrunk_items = [

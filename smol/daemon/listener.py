@@ -263,6 +263,11 @@ class DragTracker:
 
         return None
 
+    def reset(self) -> None:
+        """Reset drag state."""
+        self.drag_origin = None
+        self.is_dragging = False
+
 
 class ListenerCoordinator:
     """Coordinates key and drag events with DonutWindow summoning lifecycle.
@@ -311,6 +316,7 @@ class ListenerCoordinator:
     def on_key_up(self, key_name: str, held_ms: float = 0.0) -> None:
         """Handle candidate trigger key release event."""
         self.log(f"Trigger key '{key_name}' released after {int(held_ms)}ms.")
+        self.drag_tracker.reset()
         if self.is_donut_visible and not self.has_active_drop:
             self.log("Trigger key released without drop; hiding donut overlay.")
             self.is_donut_visible = False
@@ -329,6 +335,15 @@ class ListenerCoordinator:
             if self.on_summon is not None:
                 self.on_summon(x, y)
 
+    def on_drag_cancelled(self) -> None:
+        """Handle drag cancellation midway."""
+        self.drag_tracker.reset()
+        if self.is_donut_visible and not self.has_active_drop:
+            self.log("Drag cancelled midway; hiding donut overlay.")
+            self.is_donut_visible = False
+            if self.on_dismiss is not None:
+                self.on_dismiss("drag_cancelled")
+
     def on_drop_received(self, files: list[Any]) -> None:
         """Mark that a file drop was received on the donut."""
         self.has_active_drop = True
@@ -336,6 +351,7 @@ class ListenerCoordinator:
 
     def on_esc_pressed(self) -> None:
         """Handle Esc key cancellation."""
+        self.drag_tracker.reset()
         if self.is_donut_visible:
             self.log("Donut dismissed via Esc key.")
             self.is_donut_visible = False
@@ -345,6 +361,7 @@ class ListenerCoordinator:
 
     def on_click_outside(self) -> None:
         """Handle click outside donut."""
+        self.drag_tracker.reset()
         if self.is_donut_visible:
             self.log("Donut dismissed via click outside.")
             self.is_donut_visible = False
@@ -356,6 +373,7 @@ class ListenerCoordinator:
         """Reset coordinator state."""
         self.is_donut_visible = False
         self.has_active_drop = False
+        self.drag_tracker.reset()
 
 
 class X11EventListener(QThread):
@@ -364,6 +382,7 @@ class X11EventListener(QThread):
     key_down = Signal(str)
     key_up = Signal(str, float)
     drag_started = Signal(int, int)
+    drag_cancelled = Signal()
     error_occurred = Signal(str)
 
     def __init__(
@@ -471,11 +490,15 @@ class X11EventListener(QThread):
                     root_x = pointer.root_x
                     root_y = pointer.root_y
                     button1_down = bool(pointer.mask & X.Button1Mask)
+                    was_dragging = self.drag_tracker.is_dragging
                     drag_coords = self.drag_tracker.on_pointer_update(
                         root_x, root_y, button1_down, trigger_held
                     )
                     if drag_coords is not None:
                         self.drag_started.emit(drag_coords[0], drag_coords[1])
+                    elif was_dragging and not button1_down:
+                        self.drag_tracker.reset()
+                        self.drag_cancelled.emit()
                     time.sleep(self.poll_interval)
                 else:
                     time.sleep(0.025)

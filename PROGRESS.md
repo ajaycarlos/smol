@@ -182,6 +182,19 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Recorded `python-xlib` dependency and licensing (LGPL-2.1-or-later) in `NOTICE` and `pyproject.toml`.
   - VERIFY: `smol daemon start/status/stop` runs cleanly; idle CPU ~1%; `uv run pytest` (250 passed); `uv run ruff check .` clean.
 
+- Core engine quality search verification & highest quality enforcement in `shrink_image`:
+  - Verified binary search in `_lossy_quality_search_and_downscale` rigorously finds and returns the maximal quality <= target.
+  - Added unit test `test_shrink_image_selects_highest_quality_in_range` proving `quality + 1` from the source image exceeds target.
+  - Root cause documented for 524 KB PNG -> 147 KB incident: unquantized PNG was 517 KB (> 500 KB target), and 256-color palette quantization produced 147.85 KB because PNG has no lossy quality knob.
+
+- Implement robust drag-drop handling, URI decoding, job queueing, and `smol daemon logs` (P5.3):
+  - Created standalone `parse_drop_uris(mime_data)` supporting `text/uri-list`, QUrl arrays, `file://localhost/` syntax, percent-encoded Unicode and spaces, and multiple files from different folders.
+  - Implemented job queueing in `DonutWindow` (`queue_or_start_shrink`, `job_queue` property, chained execution in `_on_shrink_finished`) allowing users to drop additional files while a job is currently working without losing drops or failing silently.
+  - Added clean drag cancellation (`on_drag_cancelled`) and early trigger key release handling in `ListenerCoordinator` and `X11EventListener`, resetting `DragTracker` and dismissing the overlay.
+  - Added `smol daemon logs [--lines N]` subcommand displaying running status, PID, log path, drop/job summary metrics, and formatted recent log history.
+  - Added test suites in `tests/daemon/test_drop_robustness.py` and `tests/daemon/test_daemon_logs.py` (10 new tests, 262 total passed).
+  - VERIFY: `smol daemon logs` displays activity summary and recent history; all 262 tests pass; `uv run ruff check .` clean.
+
 ## Current milestone
 M4 complete. Next: M5 — Animation and polish.
 

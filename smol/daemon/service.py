@@ -299,6 +299,7 @@ class DaemonService:
                 listener.key_down.connect(coordinator.on_key_down)
                 listener.key_up.connect(coordinator.on_key_up)
                 listener.drag_started.connect(coordinator.on_drag_start)
+                listener.drag_cancelled.connect(coordinator.on_drag_cancelled)
                 listener.error_occurred.connect(
                     lambda err: logger.warning("Listener warning: %s", err)
                 )
@@ -404,4 +405,38 @@ class DaemonService:
 
         self.release_lock()
         print("smol daemon stopped (force killed).")
+        return 0
+
+    def logs(self, lines: int = 20) -> int:
+        """Print summary of daemon logs."""
+        running, pid = self.status()
+        status_str = f"Running (PID {pid})" if running else "Stopped"
+        print(f"Daemon status: {status_str}")
+        print(f"Log file:      {self.log_path}")
+
+        if not self.log_path.exists() or self.log_path.stat().st_size == 0:
+            print(f"No daemon logs found at {self.log_path}.")
+            return 0
+
+        try:
+            content = self.log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"Error reading log file: {exc}", file=sys.stderr)
+            return 1
+
+        all_lines = [line.strip() for line in content.splitlines() if line.strip()]
+        total_events = len(all_lines)
+
+        drops = [line for line in all_lines if "Drop received:" in line]
+        finished = [line for line in all_lines if "Shrink job finished:" in line]
+        failed = [line for line in all_lines if "Shrink job failed:" in line]
+
+        print(f"Total logged events: {total_events}")
+        print(f"Drops received:      {len(drops)}")
+        print(f"Shrink jobs:         {len(finished)} completed, {len(failed)} failed")
+        print("-" * 60)
+        show_count = min(lines, total_events)
+        print(f"Recent log entries (last {show_count}):")
+        for line in all_lines[-lines:]:
+            print(f"  {line}")
         return 0

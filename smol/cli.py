@@ -391,15 +391,15 @@ def donut(argv: list[str]) -> int:
 
 
 def daemon(argv: list[str]) -> int:
-    """Handle `smol daemon start|stop|status|run` subcommand."""
+    """Handle `smol daemon start|stop|status|run|logs` subcommand."""
     parser = argparse.ArgumentParser(
         prog="smol daemon",
         description="Manage the background smol daemon service",
     )
     parser.add_argument(
         "action",
-        choices=["start", "stop", "status", "run"],
-        help="Daemon action: start, stop, status, or run",
+        choices=["start", "stop", "status", "run", "logs"],
+        help="Daemon action: start, stop, status, run, or logs",
     )
     parser.add_argument(
         "--state-dir",
@@ -412,6 +412,13 @@ def daemon(argv: list[str]) -> int:
         type=str,
         default=None,
         help="Path to smol config.toml",
+    )
+    parser.add_argument(
+        "--lines",
+        "-n",
+        type=int,
+        default=20,
+        help="Number of log entries to display (default: 20)",
     )
 
     if "--help" in argv or "-h" in argv or not argv:
@@ -441,6 +448,8 @@ def daemon(argv: list[str]) -> int:
             return 1
     if args.action == "run":
         return service.run()
+    if args.action == "logs":
+        return service.logs(lines=args.lines)
 
     return 2
 
