@@ -670,3 +670,50 @@ def test_shrink_image_post_write_size_verification_guard(
         assert not result.output_path.exists()
 
 
+def test_shrink_image_selects_highest_quality_in_range(tmp_path: Path) -> None:
+    """Verify shrink_image binary searches 60..95 and returns highest quality."""
+    import io
+
+    src_file = tmp_path / "compressible.jpg"
+    _create_compressible_jpeg(src_file, width=1200, height=1600, seed=42)
+
+    target_bytes = 500_000
+    result = shrink_image(src_file, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.output_path is not None
+    assert result.output_path.exists()
+    assert result.quality is not None
+    assert 60 <= result.quality <= 95
+    assert result.final_bytes <= target_bytes
+    # Must land close to target (>= 90%)
+    assert result.final_bytes >= target_bytes * 0.90
+
+    # Verify quality + 1 encoded from original image exceeds target
+    # (proving this is the HIGHEST quality that fits)
+    if result.quality < 95:
+        with Image.open(src_file) as orig_im:
+            buf = io.BytesIO()
+            orig_im.save(buf, format="JPEG", quality=result.quality + 1, optimize=True)
+            assert len(buf.getvalue()) > target_bytes
+
+
+def test_shrink_image_downscale_searches_quality_in_range(tmp_path: Path) -> None:
+    """Verify downscaling quality search tests qualities in [60, 90]."""
+    src_file = tmp_path / "compressible_downscale.jpg"
+    _create_compressible_jpeg(src_file, width=1200, height=1600, seed=42)
+
+    # 100 KB target forces downscaling from 1200x1600
+    target_bytes = 100_000
+    result = shrink_image(src_file, target_bytes=target_bytes)
+
+    assert result.ok is True
+    assert result.scale < 1.0
+    assert result.quality is not None
+    assert 60 <= result.quality <= 90
+    assert result.final_bytes <= target_bytes
+    assert result.final_bytes >= target_bytes * 0.90
+
+
+
+
