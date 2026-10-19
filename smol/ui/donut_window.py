@@ -15,13 +15,16 @@ import os
 import re
 import urllib.parse
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import (
+    Property,
+    QEasingCurve,
     QMimeData,
+    QObject,
     QPoint,
     QPointF,
+    QPropertyAnimation,
     QRectF,
     Qt,
     Signal,
@@ -49,7 +52,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
-from smol.core.config import add_custom_size, get_custom_sizes
+from smol.core.config import add_custom_size, get_custom_sizes, get_reduce_motion
 from smol.core.result import Result
 from smol.core.size import format_size, parse_size
 from smol.ui.custom_input import CustomInputDialog
@@ -91,14 +94,43 @@ def build_segment_config(
     return base
 
 
-@dataclass
-class SegmentItem:
+class SegmentItem(QObject):
     """A segment displayed in the donut."""
 
-    index: int
-    label: str
-    target_bytes: int | None
-    enabled: bool = True
+    def __init__(
+        self,
+        index: int,
+        label: str,
+        target_bytes: int | None,
+        enabled: bool = True,
+        reduce_motion: bool = False,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.index = index
+        self.label = label
+        self.target_bytes = target_bytes
+        self.enabled = enabled
+        self.reduce_motion = reduce_motion
+        self._hover_progress: float = 0.0
+        self._hover_anim: QPropertyAnimation | None = None
+
+    @Property(float)
+    def hover_progress(self) -> float:
+        return self._hover_progress
+
+    @hover_progress.setter
+    def hover_progress(self, val: float) -> None:
+        self._hover_progress = max(0.0, min(1.0, float(val)))
+        p = self.parent()
+        if p is not None and hasattr(p, "update"):
+            p.update()
+
+    @property
+    def hover_scale(self) -> float:
+        if self.reduce_motion:
+            return 1.0
+        return 1.0 + (0.06 * self._hover_progress)
 
 
 def _load_thumbnail_pixmap(path: Path, max_size: int = 70) -> QPixmap | None:
@@ -255,6 +287,7 @@ class DonutWindow(QWidget):
         gap_angle: float = 0.0,
         on_select: Callable[[str], None] | None = None,
         config_path: Path | str | None = None,
+        reduce_motion: bool | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -265,6 +298,16 @@ class DonutWindow(QWidget):
         self.gap_angle = gap_angle
         self.on_select = on_select
         self.config_path = config_path
+        if reduce_motion is not None:
+            self.reduce_motion = bool(reduce_motion)
+        else:
+            self.reduce_motion = get_reduce_motion(self.config_path)
+
+        self._open_scale: float = 1.0
+        self._open_anim: QPropertyAnimation | None = None
+        self._prediction_opacity: float = 0.0
+        self._prediction_anim: QPropertyAnimation | None = None
+
         self.selected_size: str | None = None
         self._custom_dialog: CustomInputDialog | None = None
         self._pending_custom_files: list[Path] = []
@@ -282,6 +325,7 @@ class DonutWindow(QWidget):
 
         self._hovered_idx: int | None = None
         self._current_prediction: Prediction | None = None
+        self._fading_prediction: Prediction | None = None
         self._blurred_desktop: QPixmap | None = None
 
         # Prediction service for hover estimation
@@ -297,6 +341,26 @@ class DonutWindow(QWidget):
 
         # Setup window properties
         self._configure_window()
+
+    @Property(float)
+    def open_scale(self) -> float:
+        """Scale factor (0.0 to 1.0) for opening fan-out animation."""
+        return self._open_scale
+
+    @open_scale.setter
+    def open_scale(self, val: float) -> None:
+        self._open_scale = max(0.0, min(1.0, float(val)))
+        self.update()
+
+    @Property(float)
+    def prediction_opacity(self) -> float:
+        """Opacity factor (0.0 to 1.0) for prediction label fade-in."""
+        return self._prediction_opacity
+
+    @prediction_opacity.setter
+    def prediction_opacity(self, val: float) -> None:
+        self._prediction_opacity = max(0.0, min(1.0, float(val)))
+        self.update()
 
     def _init_file_data(self) -> None:
         """Inspect input files to compute names, sizes, and thumbnail."""
@@ -355,6 +419,8 @@ class DonutWindow(QWidget):
                     label=label,
                     target_bytes=target_bytes,
                     enabled=enabled,
+                    reduce_motion=self.reduce_motion,
+                    parent=self,
                 )
             )
 
@@ -474,12 +540,130 @@ class DonutWindow(QWidget):
         """Return the current list of queued jobs."""
         return self._job_queue
 
+    def showEvent(self, event: object) -> None:
+        """Trigger open fan-out animation when overlay is shown."""
+        super().showEvent(event)
+        self.start_open_animation()
+
+    def start_open_animation(self) -> None:
+        """Start 120 ms OutCubic scale from centre (instant if reduce_motion)."""
+        if self.reduce_motion:
+            self._open_scale = 1.0
+            if self._open_anim is not None and self._open_anim.state():
+                self._open_anim.stop()
+            self.update()
+            return
+
+        if self._open_anim is not None and self._open_anim.state():
+            self._open_anim.stop()
+
+        self._open_scale = 0.0
+        anim = QPropertyAnimation(self, b"open_scale", self)
+        anim.setDuration(120)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._open_anim = anim
+        anim.start()
+
+    def _segment_at(self, dx: float, dy: float) -> int | None:
+        """Find segment index at (dx, dy), accounting for 6% hover expansion."""
+        idx = self.geometry_calc.segment_at(dx, dy)
+        if idx is not None:
+            return idx
+        if (
+            self._hovered_idx is not None
+            and 0 <= self._hovered_idx < len(self.segments)
+        ):
+            seg = self.segments[self._hovered_idx]
+            if seg.hover_scale > 1.0:
+                expanded_r_out = self.geometry_calc.outer_radius * seg.hover_scale
+                r = math.hypot(dx, dy)
+                if self.geometry_calc.inner_radius <= r <= expanded_r_out + 1.0:
+                    theta = math.degrees(math.atan2(dx, -dy)) % 360.0
+                    slot_idx = int(theta // self.geometry_calc.slot_angle)
+                    if slot_idx == self._hovered_idx:
+                        return self._hovered_idx
+        return None
+
+    def _animate_segment_hover(self, seg: SegmentItem, target_val: float) -> None:
+        """Animate segment hover_progress smoothly towards target_val."""
+        if self.reduce_motion:
+            seg.hover_progress = target_val
+            return
+
+        if seg._hover_anim is not None and seg._hover_anim.state():
+            seg._hover_anim.stop()
+
+        anim = QPropertyAnimation(seg, b"hover_progress", self)
+        anim.setDuration(100)
+        anim.setStartValue(seg.hover_progress)
+        anim.setEndValue(target_val)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        seg._hover_anim = anim
+        anim.start()
+
+    def _set_hovered_segment(self, new_idx: int | None) -> None:
+        """Transition hovered segment, animating hover scale and brightening."""
+        if new_idx == self._hovered_idx:
+            return
+
+        self._hovered_idx = new_idx
+        for idx, seg in enumerate(self.segments):
+            target_val = 1.0 if (idx == new_idx and seg.enabled) else 0.0
+            anim_active = (
+                seg._hover_anim is not None and seg._hover_anim.state()
+            )
+            if seg.hover_progress != target_val or anim_active:
+                if self.reduce_motion:
+                    seg.hover_progress = target_val
+                else:
+                    self._animate_segment_hover(seg, target_val)
+
+    def _animate_prediction_opacity(self, target_val: float) -> None:
+        """Animate prediction_opacity smoothly towards target_val."""
+        if target_val <= 0.0:
+            self._fading_prediction = (
+                self._current_prediction or self._fading_prediction
+            )
+            self._current_prediction = None
+
+        if self.reduce_motion:
+            self.prediction_opacity = target_val
+            self._fading_prediction = None
+            self.update()
+            return
+
+        if self._prediction_anim is not None and self._prediction_anim.state():
+            self._prediction_anim.stop()
+
+        anim = QPropertyAnimation(self, b"prediction_opacity", self)
+        anim.setDuration(120)
+        anim.setStartValue(self.prediction_opacity)
+        anim.setEndValue(target_val)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        if target_val <= 0.0:
+            def on_fade_out_finished() -> None:
+                if self.prediction_opacity <= 0.0:
+                    self._fading_prediction = None
+                    self.update()
+            anim.finished.connect(on_fade_out_finished)
+        self._prediction_anim = anim
+        anim.start()
+
     def reset_state(self) -> None:
         """Reset overlay to fresh idle state ready for a new summon or drop."""
         if self._shrink_worker is not None and self._shrink_worker.isRunning():
             self._shrink_worker.cancel()
             self._shrink_worker.wait(200)
             self._shrink_worker = None
+        if self._open_anim is not None and self._open_anim.state():
+            self._open_anim.stop()
+        if self._prediction_anim is not None and self._prediction_anim.state():
+            self._prediction_anim.stop()
+        for seg in getattr(self, "segments", []):
+            if seg._hover_anim is not None and seg._hover_anim.state():
+                seg._hover_anim.stop()
         self._job_queue.clear()
         self._accumulated_results.clear()
         self.state = "idle"
@@ -491,10 +675,15 @@ class DonutWindow(QWidget):
         self._retry_rect = None
         self._hovered_idx = None
         self._current_prediction = None
+        self._fading_prediction = None
+        self._prediction_opacity = 0.0
         self.file_paths = []
         self._init_file_data()
         self._init_segments()
-        self.update()
+        if self.isVisible():
+            self.start_open_animation()
+        else:
+            self.update()
 
     def run_overlay(self) -> int:
         """Center on cursor, capture backdrop, show window, and execute event loop."""
@@ -565,13 +754,11 @@ class DonutWindow(QWidget):
             item = self.segments[self._hovered_idx]
             if item.target_bytes == target_bytes:
                 self._current_prediction = prediction
-                self.update()
+                self._animate_prediction_opacity(1.0)
 
     def _on_prediction_cleared(self) -> None:
-        """Clear current prediction text."""
-        if self._current_prediction is not None:
-            self._current_prediction = None
-            self.update()
+        """Clear current prediction text with smooth fade-out."""
+        self._animate_prediction_opacity(0.0)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Update hover state on segments and trigger debounced prediction."""
@@ -584,12 +771,12 @@ class DonutWindow(QWidget):
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
 
-        idx = self.geometry_calc.segment_at(dx, dy)
+        idx = self._segment_at(dx, dy)
         if idx != self._hovered_idx:
-            self._hovered_idx = idx
+            self._set_hovered_segment(idx)
             if idx is None:
                 self.prediction_service.cancel()
-                self._current_prediction = None
+                self._animate_prediction_opacity(0.0)
             else:
                 item = self.segments[idx]
                 if (
@@ -598,24 +785,30 @@ class DonutWindow(QWidget):
                     or self.state != "idle"
                 ):
                     self.prediction_service.cancel()
-                    self._current_prediction = None
+                    self._animate_prediction_opacity(0.0)
                 else:
                     first_file = self._first_image_path()
                     if first_file is not None:
                         self.prediction_service.request(first_file, item.target_bytes)
-            self.update()
         event.accept()
 
     def leaveEvent(self, event: object) -> None:
         """Clear hover state and cancel pending predictions when mouse leaves window."""
         if self._hovered_idx is not None:
-            self._hovered_idx = None
+            self._set_hovered_segment(None)
             self.prediction_service.cancel()
-            self._current_prediction = None
-            self.update()
+            self._animate_prediction_opacity(0.0)
 
     def closeEvent(self, event: object) -> None:
-        """Clean up background workers and child dialogs on close."""
+        """Clean up background workers, animations, and child dialogs on close."""
+        if self._open_anim is not None and self._open_anim.state():
+            self._open_anim.stop()
+        if self._prediction_anim is not None and self._prediction_anim.state():
+            self._prediction_anim.stop()
+        for seg in getattr(self, "segments", []):
+            if seg._hover_anim is not None and seg._hover_anim.state():
+                seg._hover_anim.stop()
+
         if self._custom_dialog is not None and self._custom_dialog.isVisible():
             self._custom_dialog.close()
         self.prediction_service.cancel()
@@ -643,16 +836,14 @@ class DonutWindow(QWidget):
         pos = event.position() if hasattr(event, "position") else event.pos()
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
-        idx = self.geometry_calc.segment_at(dx, dy)
+        idx = self._segment_at(dx, dy)
         if idx != self._hovered_idx:
-            self._hovered_idx = idx
-            self.update()
+            self._set_hovered_segment(idx)
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
         """Clear drag hover state."""
-        self._hovered_idx = None
-        self.update()
+        self._set_hovered_segment(None)
         event.accept()
 
     def dropEvent(self, event: QDropEvent) -> None:
@@ -661,7 +852,7 @@ class DonutWindow(QWidget):
         pos = event.position() if hasattr(event, "position") else event.pos()
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
-        idx = self.geometry_calc.segment_at(dx, dy)
+        idx = self._segment_at(dx, dy)
 
         dropped_files = self._parse_drop_uris(event.mimeData())
         if not dropped_files:
@@ -899,12 +1090,12 @@ class DonutWindow(QWidget):
                 self.retry_smallest()
                 event.accept()
                 return
-            if r > self.geometry_calc.outer_radius:
+            if r > self.geometry_calc.outer_radius * 1.06:
                 self.dismissed.emit("outside")
                 self.close()
                 event.accept()
                 return
-            idx = self.geometry_calc.segment_at(dx, dy)
+            idx = self._segment_at(dx, dy)
             if idx is not None:
                 item = self.segments[idx]
                 if item.enabled:
@@ -919,12 +1110,12 @@ class DonutWindow(QWidget):
             return
 
         if self.state == "success":
-            if r > self.geometry_calc.outer_radius:
+            if r > self.geometry_calc.outer_radius * 1.06:
                 self.dismissed.emit("outside")
                 self.close()
                 event.accept()
                 return
-            idx = self.geometry_calc.segment_at(dx, dy)
+            idx = self._segment_at(dx, dy)
             if idx is not None:
                 item = self.segments[idx]
                 if item.enabled:
@@ -939,9 +1130,9 @@ class DonutWindow(QWidget):
             return
 
         # Idle state
-        idx = self.geometry_calc.segment_at(dx, dy)
+        idx = self._segment_at(dx, dy)
         if idx is None:
-            if r > self.geometry_calc.outer_radius:
+            if r > self.geometry_calc.outer_radius * 1.06:
                 self.dismissed.emit("outside")
                 self.close()
                 event.accept()
@@ -979,6 +1170,14 @@ class DonutWindow(QWidget):
         outer_rect = QRectF(center_x - r_out, center_y - r_out, r_out * 2, r_out * 2)
         inner_rect = QRectF(center_x - r_in, center_y - r_in, r_in * 2, r_in * 2)
 
+        # Open animation fan-out scale from centre
+        painter.save()
+        if self._open_scale < 1.0:
+            scale_val = max(0.001, self._open_scale)
+            painter.translate(center_x, center_y)
+            painter.scale(scale_val, scale_val)
+            painter.translate(-center_x, -center_y)
+
         # 1. Ambient outer drop shadow (elevation effect)
         shadow_rect = QRectF(
             center_x - r_out - 12.0,
@@ -1011,9 +1210,25 @@ class DonutWindow(QWidget):
         painter.restore()
 
         # 3. Render each donut segment (tint, highlights, labels)
-        for idx, seg_geom in enumerate(self.geometry_calc.segments):
+        # Draw in order so hovered segments render on top of unhovered
+        segment_draw_order = sorted(
+            range(len(self.segments)),
+            key=lambda i: self.segments[i].hover_progress,
+        )
+
+        for idx in segment_draw_order:
+            seg_geom = self.geometry_calc.segments[idx]
             item = self.segments[idx]
-            is_hovered = idx == self._hovered_idx and item.enabled
+            hp = item.hover_progress
+            scale = item.hover_scale
+
+            seg_r_out = r_out * scale
+            seg_outer_rect = QRectF(
+                center_x - seg_r_out,
+                center_y - seg_r_out,
+                seg_r_out * 2.0,
+                seg_r_out * 2.0,
+            )
 
             # Segment angular path
             path = QPainterPath()
@@ -1021,8 +1236,8 @@ class DonutWindow(QWidget):
             sweep_qt = -self.geometry_calc.span_angle
             end_qt = 90.0 - seg_geom.end_angle
 
-            path.arcMoveTo(outer_rect, start_qt)
-            path.arcTo(outer_rect, start_qt, sweep_qt)
+            path.arcMoveTo(seg_outer_rect, start_qt)
+            path.arcTo(seg_outer_rect, start_qt, sweep_qt)
             path.arcTo(inner_rect, end_qt, -sweep_qt)
             path.closeSubpath()
 
@@ -1032,38 +1247,41 @@ class DonutWindow(QWidget):
             # Dimmed segments: darker recessed tint (never brighter than active)
             if not item.enabled:
                 fill_color = QColor(10, 12, 18, 160)
-            elif is_hovered:
-                fill_color = QColor(45, 52, 75, 190)
             else:
-                fill_color = QColor(22, 25, 38, 125)
+                r = int(22 + (45 - 22) * hp)
+                g = int(25 + (52 - 25) * hp)
+                b = int(38 + (75 - 38) * hp)
+                a = int(125 + (190 - 125) * hp)
+                fill_color = QColor(r, g, b, a)
 
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill_color)
             painter.drawPath(path)
 
-            # If hovered: subtle radial glow behind the label and tint brightening
+            # Anchor position: floats slightly outward with 6% segment growth
             ax, ay = seg_geom.label_anchor
-            anchor = center_pt + QPointF(ax, ay)
+            anchor_scale = 1.0 + ((scale - 1.0) * 0.5)
+            anchor = center_pt + QPointF(ax * anchor_scale, ay * anchor_scale)
 
-            if is_hovered:
+            if hp > 0.0 and item.enabled:
                 # Subtle hover tint wash
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(255, 255, 255, 25))
+                painter.setBrush(QColor(255, 255, 255, int(25 * hp)))
                 painter.drawPath(path)
 
                 # Radial glow behind label
                 glow = QRadialGradient(anchor, 42.0)
-                glow.setColorAt(0.0, QColor(255, 255, 255, 45))
-                glow.setColorAt(0.6, QColor(255, 255, 255, 18))
+                glow.setColorAt(0.0, QColor(255, 255, 255, int(45 * hp)))
+                glow.setColorAt(0.6, QColor(255, 255, 255, int(18 * hp)))
                 glow.setColorAt(1.0, QColor(255, 255, 255, 0))
                 painter.setBrush(QBrush(glow))
                 painter.drawEllipse(anchor, 42.0, 42.0)
 
                 # Outer edge accent arc for hovered segment
                 path_outer_hover = QPainterPath()
-                path_outer_hover.arcMoveTo(outer_rect, start_qt)
-                path_outer_hover.arcTo(outer_rect, start_qt, sweep_qt)
-                painter.setPen(QPen(QColor(165, 225, 255, 180), 2.0))
+                path_outer_hover.arcMoveTo(seg_outer_rect, start_qt)
+                path_outer_hover.arcTo(seg_outer_rect, start_qt, sweep_qt)
+                painter.setPen(QPen(QColor(165, 225, 255, int(180 * hp)), 2.0))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(path_outer_hover)
 
@@ -1137,6 +1355,8 @@ class DonutWindow(QWidget):
                 QPointF(x1 + cos_rad * 0.5, y1 + sin_rad * 0.5),
                 QPointF(x2 + cos_rad * 0.5, y2 + sin_rad * 0.5),
             )
+
+        painter.restore()
 
         # 6. Centre circle: frosted glass treatment
         center_card_r = r_in - 2.0
@@ -1431,29 +1651,64 @@ class DonutWindow(QWidget):
             font_size.setWeight(QFont.Weight.DemiBold)
             painter.setFont(font_size)
 
-            if self._current_prediction is not None:
-                if self._current_prediction.ok:
-                    size_color = QColor(165, 225, 255, 255)
-                else:
-                    size_color = QColor(251, 191, 36, 255)
-                display_text = self._current_prediction.text
-            else:
-                size_color = QColor(210, 215, 225, 240)
-                display_text = self.file_size_text
-
             size_rect = QRectF(
                 center_x - center_card_r + 6.0,
                 center_y + 29.0,
                 (center_card_r - 6.0) * 2,
                 18.0,
             )
-            painter.setPen(QColor(0, 0, 0, 160))
-            painter.drawText(
-                size_rect.adjusted(0, 1, 0, 1),
-                Qt.AlignmentFlag.AlignCenter,
-                display_text,
-            )
-            painter.setPen(size_color)
-            painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, display_text)
+
+            pred = self._current_prediction or self._fading_prediction
+            op = self._prediction_opacity
+            if op <= 0.0 or pred is None:
+                painter.setPen(QColor(0, 0, 0, 160))
+                painter.drawText(
+                    size_rect.adjusted(0, 1, 0, 1),
+                    Qt.AlignmentFlag.AlignCenter,
+                    self.file_size_text,
+                )
+                painter.setPen(QColor(210, 215, 225, 240))
+                painter.drawText(
+                    size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text
+                )
+            elif op >= 1.0:
+                is_ok = pred.ok
+                size_color = (
+                    QColor(165, 225, 255, 255) if is_ok else QColor(251, 191, 36, 255)
+                )
+                painter.setPen(QColor(0, 0, 0, 160))
+                painter.drawText(
+                    size_rect.adjusted(0, 1, 0, 1),
+                    Qt.AlignmentFlag.AlignCenter,
+                    pred.text,
+                )
+                painter.setPen(size_color)
+                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, pred.text)
+            else:
+                # Smooth cross-fade between file size and prediction label
+                file_alpha = int(240 * (1.0 - op))
+                shadow_alpha_file = int(160 * (1.0 - op))
+                painter.setPen(QColor(0, 0, 0, shadow_alpha_file))
+                painter.drawText(
+                    size_rect.adjusted(0, 1, 0, 1),
+                    Qt.AlignmentFlag.AlignCenter,
+                    self.file_size_text,
+                )
+                painter.setPen(QColor(210, 215, 225, file_alpha))
+                painter.drawText(
+                    size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text
+                )
+
+                pred_color = QColor(165, 225, 255) if pred.ok else QColor(251, 191, 36)
+                pred_color.setAlpha(int(255 * op))
+                shadow_alpha_pred = int(160 * op)
+                painter.setPen(QColor(0, 0, 0, shadow_alpha_pred))
+                painter.drawText(
+                    size_rect.adjusted(0, 1, 0, 1),
+                    Qt.AlignmentFlag.AlignCenter,
+                    pred.text,
+                )
+                painter.setPen(pred_color)
+                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, pred.text)
 
         painter.end()

@@ -213,11 +213,21 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Synchronized package version to 0.4.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
   - VERIFY: all 269 tests passing; `uv run ruff check .` clean; all performance targets verified and met; tagged `v0.4.0`.
 
+- Implement open and hover animations and reduce_motion toggle (PLAN.md Section 6):
+  - Open: segments fan out from centre with 120 ms `OutCubic` scale using `QPropertyAnimation` targeting 60 fps.
+  - Hover: active hovered segment smoothly scales up 6% (`hover_scale = 1.06`), smoothly brightens, and label anchor tracks outward; transitioning/hovered segments render on top with outer rim edge hover support.
+  - Prediction label: smoothly fades in with `prediction_opacity` (120 ms OutCubic) and cross-fades against original file size.
+  - Added `reduce_motion` config toggle in `~/.config/smol/config.toml` (`get_reduce_motion`, `set_reduce_motion` in `smol/core/config.py`): disables all scaling (segments stay 1.0 scale) and provides instant changes and simple fades only.
+  - Added test suite in `tests/ui/test_donut_animation.py` (10 tests) and verification harness `scripts/verify_animations.py`.
+  - VERIFY: open scale fans out 0.0 -> 1.0 in 120 ms OutCubic; hover reaches 1.06 (+6.0%); prediction opacity fades 0.0 -> 1.0; with reduce_motion on, no scaling occurs (scale remains 1.0); all 281 tests pass; ruff clean.
+
 ## Current milestone
-M4 complete and performance-verified. Next: M5 — Animation and polish.
+M5 — Animation and polish (In progress: open, hover, and prediction animations completed).
 
 ## Next
-- Milestone M5: Animation spec implementation (smooth open/hover/drop/progress animations, toast with Open folder / Undo / Copy path).
+- Drop segment pulse into ring around thumbnail, other segments fading.
+- Working ring progress and countdown.
+- Done checkmark burst (600 ms) and toast with Open folder / Undo / Copy path.
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).

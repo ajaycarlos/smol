@@ -34,7 +34,7 @@ def test_get_config_path_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_load_config_nonexistent(tmp_path: Path) -> None:
     config_file = tmp_path / "smol" / "config.toml"
     cfg = load_config(config_file)
-    assert cfg == {"custom_sizes": []}
+    assert cfg == {"custom_sizes": [], "reduce_motion": False}
     assert not config_file.exists()
 
 
@@ -54,7 +54,7 @@ def test_load_config_corrupted(tmp_path: Path) -> None:
     config_file.write_text("invalid [[ toml content ///", encoding="utf-8")
 
     cfg = load_config(config_file)
-    assert cfg == {"custom_sizes": []}
+    assert cfg == {"custom_sizes": [], "reduce_motion": False}
 
 
 def test_add_custom_size_remember_last_three(tmp_path: Path) -> None:
@@ -88,3 +88,23 @@ def test_add_custom_size_deduplicates(tmp_path: Path) -> None:
     add_custom_size(75_000, config_file)
 
     assert get_custom_sizes(config_file) == [150_000, 75_000]
+
+
+def test_reduce_motion_default(tmp_path: Path) -> None:
+    config_file = tmp_path / "smol" / "config.toml"
+    from smol.core.config import get_reduce_motion
+
+    assert get_reduce_motion(config_file) is False
+
+
+def test_reduce_motion_save_and_load(tmp_path: Path) -> None:
+    config_file = tmp_path / "smol" / "config.toml"
+    from smol.core.config import get_reduce_motion
+
+    cfg = load_config(config_file)
+    cfg["reduce_motion"] = True
+    save_config(cfg, config_file)
+
+    assert get_reduce_motion(config_file) is True
+    loaded = load_config(config_file)
+    assert loaded["reduce_motion"] is True

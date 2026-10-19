@@ -14,12 +14,14 @@ from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "custom_sizes": [],
+    "reduce_motion": False,
 }
 
 DEFAULT_DAEMON_CONFIG: dict[str, Any] = {
     "trigger_key": "Super",
     "sizes": [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000],
     "custom_sizes": [],
+    "reduce_motion": False,
 }
 
 
@@ -53,6 +55,8 @@ def get_daemon_config(config_path: Path | str | None = None) -> dict[str, Any]:
             result["sizes"] = parsed_sizes
     if "custom_sizes" in cfg and isinstance(cfg["custom_sizes"], list):
         result["custom_sizes"] = cfg["custom_sizes"]
+    if "reduce_motion" in cfg and isinstance(cfg["reduce_motion"], bool):
+        result["reduce_motion"] = cfg["reduce_motion"]
     return result
 
 
@@ -72,6 +76,11 @@ def load_config(config_path: Path | str | None = None) -> dict[str, Any]:
                 return dict(DEFAULT_CONFIG)
             if "custom_sizes" not in data or not isinstance(data["custom_sizes"], list):
                 data["custom_sizes"] = []
+            if (
+                "reduce_motion" not in data
+                or not isinstance(data["reduce_motion"], bool)
+            ):
+                data["reduce_motion"] = False
             return data
     except (tomllib.TOMLDecodeError, OSError):
         return dict(DEFAULT_CONFIG)
@@ -81,10 +90,12 @@ def _serialize_toml(config: dict[str, Any]) -> str:
     """Serialize a simple smol configuration dictionary to TOML format."""
     lines: list[str] = ["# smol configuration", ""]
     for key, value in config.items():
-        if isinstance(value, list):
+        if isinstance(value, bool):
+            lines.append(f"{key} = {'true' if value else 'false'}")
+        elif isinstance(value, list):
             items_str = ", ".join(repr(v) for v in value)
             lines.append(f"{key} = [{items_str}]")
-        elif isinstance(value, (str, int, float, bool)):
+        elif isinstance(value, (str, int, float)):
             lines.append(f"{key} = {value!r}")
     lines.append("")
     return "\n".join(lines)
@@ -132,3 +143,19 @@ def get_custom_sizes(config_path: Path | str | None = None) -> list[int]:
     raw_sizes = config.get("custom_sizes", [])
     sizes = [int(s) for s in raw_sizes if isinstance(s, (int, float))]
     return sizes[-3:]
+
+
+def get_reduce_motion(config_path: Path | str | None = None) -> bool:
+    """Retrieve reduce_motion setting from config (defaults to False)."""
+    config = load_config(config_path)
+    val = config.get("reduce_motion", False)
+    return bool(val)
+
+
+def set_reduce_motion(
+    enabled: bool, config_path: Path | str | None = None
+) -> None:
+    """Update reduce_motion setting in config."""
+    config = load_config(config_path)
+    config["reduce_motion"] = bool(enabled)
+    save_config(config, config_path)
