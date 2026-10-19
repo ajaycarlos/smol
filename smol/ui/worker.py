@@ -6,6 +6,7 @@ blocking the Qt event loop, emitting progress updates and completion signals.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ class ShrinkWorker(QThread):
 
     # progress(current_1_based, total_files, status_or_filename)
     progress = Signal(int, int, str)
+    # step_progress(progress_fraction, current_bytes) emitted during compression steps
+    step_progress = Signal(float, int)
     # result_ready(Path, Result) emitted per file
     result_ready = Signal(object, object)
     # results_ready(list[tuple[Path, Result]]) emitted upon batch completion
@@ -35,12 +38,20 @@ class ShrinkWorker(QThread):
         files: Sequence[Path | str],
         target_bytes: int,
         options: dict[str, Any] | None = None,
+        pace_steps: bool = True,
+        step_pace_s: float = 0.035,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self.files = [Path(f) for f in files]
         self.target_bytes = target_bytes
-        self.options = options or {}
+        self.options = dict(options or {})
+        self.pace_steps = (
+            bool(self.options["pace_steps"])
+            if "pace_steps" in self.options
+            else pace_steps
+        )
+        self.step_pace_s = float(self.options.get("step_pace_s", step_pace_s))
         self._is_cancelled = False
 
     def cancel(self) -> None:
@@ -57,12 +68,49 @@ class ShrinkWorker(QThread):
                 break
 
             self.progress.emit(idx, total, src_path.name)
+            ext = src_path.suffix.lower()
+
+            # Stub progress for PDF and video formats (M7/M8 engines)
+            if ext in (".pdf", ".mp4", ".mov", ".mkv", ".webm", ".avi"):
+                orig_bytes = src_path.stat().st_size if src_path.exists() else 0
+                stub_steps = [0.25, 0.50, 0.75, 1.0]
+                for frac in stub_steps:
+                    if self._is_cancelled:
+                        break
+                    diff = orig_bytes - min(orig_bytes, self.target_bytes)
+                    cand_bytes = int(orig_bytes - diff * frac)
+                    self.step_progress.emit(frac, max(1, cand_bytes))
+                    if self.pace_steps:
+                        time.sleep(self.step_pace_s)
+
+                kind = "PDF" if ext == ".pdf" else "Video"
+                res = Result(
+                    ok=False,
+                    original_bytes=orig_bytes,
+                    error=(
+                        f"{kind} compression engine coming in future milestone; "
+                        "skipped."
+                    ),
+                )
+                results.append((src_path, res))
+                self.result_ready.emit(src_path, res)
+                continue
+
+            def on_step(frac: float, cur_bytes: int) -> None:
+                if self._is_cancelled:
+                    return
+                self.step_progress.emit(frac, cur_bytes)
+                if self.pace_steps:
+                    time.sleep(self.step_pace_s)
+
+            opts = dict(self.options)
+            opts["step_callback"] = on_step
 
             try:
                 res = shrink_image(
                     src_path,
                     self.target_bytes,
-                    options=self.options,
+                    options=opts,
                 )
             except Exception as exc:  # noqa: BLE001
                 res = Result(

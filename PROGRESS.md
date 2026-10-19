@@ -217,17 +217,21 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Open: segments fan out from centre with 120 ms `OutCubic` scale using `QPropertyAnimation` targeting 60 fps.
   - Hover: active hovered segment smoothly scales up 6% (`hover_scale = 1.06`), smoothly brightens, and label anchor tracks outward; transitioning/hovered segments render on top with outer rim edge hover support.
   - Prediction label: smoothly fades in with `prediction_opacity` (120 ms OutCubic) and cross-fades against original file size.
-  - Added `reduce_motion` config toggle in `~/.config/smol/config.toml` (`get_reduce_motion`, `set_reduce_motion` in `smol/core/config.py`): disables all scaling (segments stay 1.0 scale) and provides instant changes and simple fades only.
-  - Added test suite in `tests/ui/test_donut_animation.py` (10 tests) and verification harness `scripts/verify_animations.py`.
-  - VERIFY: open scale fans out 0.0 -> 1.0 in 120 ms OutCubic; hover reaches 1.06 (+6.0%); prediction opacity fades 0.0 -> 1.0; with reduce_motion on, no scaling occurs (scale remains 1.0); all 281 tests pass; ruff clean.
+- Implement drop animations, real ring progress, and live size countdown (PLAN.md Section 6):
+  - On drop: unchosen segments fade out (`other_segments_opacity` 1.0 -> 0.0 in 160 ms OutCubic); chosen segment pulses into a ring around the center thumbnail (240 ms OutQuad pulse, 200 ms transition).
+  - Ring progress: tracks real core engine encode iterations for images (via `step_callback` in `_lossy_quality_search_and_downscale` and `shrink_image`) and stub progression for PDF/video files; draws active cyan progress arc sweeping clockwise from 12 o'clock around the thumbnail.
+  - Live size countdown: center card dynamically updates with current candidate buffer bytes as steps arrive, counting down from original file size to final output size.
+  - Fast-path bypass: if a job completes in under 300 ms (e.g. already small files or sub-threshold jobs), bypasses intermediate animation delays and skips straight to completed state (`✓ Done`) without fake progress.
+  - Reduced motion support: when `reduce_motion=True`, animations resolve instantly (opacity = 0, scale/pulse = 0) with simple state transitions.
+  - Test suite in `tests/ui/test_donut_drop_progress.py` (7 tests) and verification harness `scripts/verify_drop_progress.py`.
+  - VERIFY: shrinking `tests/samples/portrait.jpg` (1.24 MB -> 99.5 KB) logs 10 real progress steps, smooth ring fill to 100%, and countdown from 1.24 MB down to 99,508 bytes over ~508 ms; all 288 tests pass; ruff clean.
 
 ## Current milestone
-M5 — Animation and polish (In progress: open, hover, and prediction animations completed).
+M5 — Animation and polish (In progress: open, hover, prediction, drop pulse, real ring progress, and size countdown completed).
 
 ## Next
-- Drop segment pulse into ring around thumbnail, other segments fading.
-- Working ring progress and countdown.
 - Done checkmark burst (600 ms) and toast with Open folder / Undo / Copy path.
+- Failure state in donut with shake animation and honest reason.
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).

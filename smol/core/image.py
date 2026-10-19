@@ -4,6 +4,7 @@ import io
 import math
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -94,18 +95,26 @@ def _lossy_quality_search_and_downscale(
     quality_max: int,
     min_dim: int,
     resampling: Any,
+    step_callback: Callable[[float, int], None] | None = None,
 ) -> tuple[bool, bytes | None, int, int, float, int | None, int, str | None]:
     """Execute quality binary search and Lanczos downscale ladder for JPEG or WebP."""
     steps = 0
+    is_downscaling = False
 
     def encode(im: Image.Image, q: int) -> bytes:
         nonlocal steps
         steps += 1
         if target_format == "JPEG":
-            return _encode_jpeg(im, q, exif=output_exif)
+            data = _encode_jpeg(im, q, exif=output_exif)
         elif target_format == "WEBP":
-            return _encode_webp(im, q, exif=output_exif)
-        raise ValueError(f"Unsupported lossy format: {target_format}")
+            data = _encode_webp(im, q, exif=output_exif)
+        else:
+            raise ValueError(f"Unsupported lossy format: {target_format}")
+        if step_callback is not None:
+            est_total = 14 if is_downscaling else 8
+            progress_frac = min(0.95, steps / est_total)
+            step_callback(progress_frac, len(data))
+        return data
 
     width, height = img.size
     floor_bytes = encode(img, quality_floor)
@@ -132,9 +141,12 @@ def _lossy_quality_search_and_downscale(
                 else:
                     high = mid - 1
 
+        if step_callback is not None and best_data is not None:
+            step_callback(1.0, len(best_data))
         return True, best_data, width, height, 1.0, best_q, steps, None
 
     # Full-size quality floor exceeds target: enter downscaling loop
+    is_downscaling = True
     orig_w, orig_h = width, height
     orig_short = min(orig_w, orig_h)
     min_dim_eff = min(orig_short, min_dim)
@@ -236,6 +248,8 @@ def _lossy_quality_search_and_downscale(
                 else:
                     high = mid - 1
 
+        if step_callback is not None and best_data is not None:
+            step_callback(1.0, len(best_data))
         return (
             True,
             best_data,
@@ -279,6 +293,9 @@ def shrink_image(
     )
     dry_run = bool(opts.get("dry_run", False))
     out_dir = opts.get("out_dir")
+    step_callback: Callable[[float, int], None] | None = (
+        opts.get("step_callback") or opts.get("progress_callback")
+    )
     max_pixels = int(
         opts.get(
             "max_pixels",
@@ -432,7 +449,10 @@ def shrink_image(
         def encode_png_counted(im: Image.Image, colors: int | None = None) -> bytes:
             nonlocal png_steps
             png_steps += 1
-            return _encode_png(im, colors)
+            data = _encode_png(im, colors)
+            if step_callback is not None:
+                step_callback(min(0.95, png_steps / 8.0), len(data))
+            return data
 
         orig_w, orig_h = img.size
         orig_short = min(orig_w, orig_h)
@@ -550,6 +570,7 @@ def shrink_image(
                     quality_max,
                     min_dim,
                     resampling,
+                    step_callback=step_callback,
                 )
                 steps = png_steps + lossy_steps
                 if not ok:
@@ -602,6 +623,7 @@ def shrink_image(
             quality_max,
             min_dim,
             resampling,
+            step_callback=step_callback,
         )
         if not ok or best_data is None:
             return Result(
@@ -764,6 +786,9 @@ def shrink_image(
             original_bytes=original_bytes,
             error=f"Verification failed on reopening saved file: {exc}",
         )
+
+    if step_callback is not None:
+        step_callback(1.0, final_bytes)
 
     return Result(
         ok=True,

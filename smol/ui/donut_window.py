@@ -13,6 +13,7 @@ import contextlib
 import math
 import os
 import re
+import time
 import urllib.parse
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -336,6 +337,20 @@ class DonutWindow(QWidget):
         # File metadata and thumbnail
         self._init_file_data()
 
+        # Drop and progress animation states
+        self._chosen_segment_idx: int | None = None
+        self._other_segments_opacity: float = 1.0
+        self._anim_fade_others: QPropertyAnimation | None = None
+        self._drop_transition: float = 0.0
+        self._anim_transition: QPropertyAnimation | None = None
+        self._ring_pulse: float = 0.0
+        self._anim_pulse: QPropertyAnimation | None = None
+        self._ring_progress: float = 0.0
+        self._countdown_bytes: int = 0
+        self._orig_size_bytes: int = 0
+        self._shrink_start_time: float = 0.0
+        self._is_fast_job: bool = False
+
         # Build segment items with dimming logic and geometry
         self._init_segments()
 
@@ -360,6 +375,36 @@ class DonutWindow(QWidget):
     @prediction_opacity.setter
     def prediction_opacity(self, val: float) -> None:
         self._prediction_opacity = max(0.0, min(1.0, float(val)))
+        self.update()
+
+    @Property(float)
+    def other_segments_opacity(self) -> float:
+        """Opacity (0.0 to 1.0) of unselected segments during drop/working states."""
+        return self._other_segments_opacity
+
+    @other_segments_opacity.setter
+    def other_segments_opacity(self, val: float) -> None:
+        self._other_segments_opacity = max(0.0, min(1.0, float(val)))
+        self.update()
+
+    @Property(float)
+    def drop_transition(self) -> float:
+        """Transition progress (0.0 to 1.0) from segment arc to thumbnail ring."""
+        return self._drop_transition
+
+    @drop_transition.setter
+    def drop_transition(self, val: float) -> None:
+        self._drop_transition = max(0.0, min(1.0, float(val)))
+        self.update()
+
+    @Property(float)
+    def ring_pulse(self) -> float:
+        """Pulse scale intensity (0.0 to 1.0) when segment contracts into ring."""
+        return self._ring_pulse
+
+    @ring_pulse.setter
+    def ring_pulse(self, val: float) -> None:
+        self._ring_pulse = max(0.0, min(1.0, float(val)))
         self.update()
 
     def _init_file_data(self) -> None:
@@ -651,6 +696,48 @@ class DonutWindow(QWidget):
         self._prediction_anim = anim
         anim.start()
 
+    def _start_drop_animation(self) -> None:
+        """Trigger other segments fade out and pulse chosen segment into ring."""
+        if self.reduce_motion:
+            self.other_segments_opacity = 0.0
+            self.drop_transition = 1.0
+            self.ring_pulse = 0.0
+            self.update()
+            return
+
+        # 1. Fade out other segments (160 ms)
+        if self._anim_fade_others is not None and self._anim_fade_others.state():
+            self._anim_fade_others.stop()
+        self._anim_fade_others = QPropertyAnimation(
+            self, b"other_segments_opacity", self
+        )
+        self._anim_fade_others.setDuration(160)
+        self._anim_fade_others.setStartValue(self.other_segments_opacity)
+        self._anim_fade_others.setEndValue(0.0)
+        self._anim_fade_others.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim_fade_others.start()
+
+        # 2. Chosen segment contracts into thumbnail ring (200 ms)
+        if self._anim_transition is not None and self._anim_transition.state():
+            self._anim_transition.stop()
+        self._anim_transition = QPropertyAnimation(self, b"drop_transition", self)
+        self._anim_transition.setDuration(200)
+        self._anim_transition.setStartValue(self.drop_transition)
+        self._anim_transition.setEndValue(1.0)
+        self._anim_transition.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim_transition.start()
+
+        # 3. Pulse ring around thumbnail (240 ms)
+        if self._anim_pulse is not None and self._anim_pulse.state():
+            self._anim_pulse.stop()
+        self._anim_pulse = QPropertyAnimation(self, b"ring_pulse", self)
+        self._anim_pulse.setDuration(240)
+        self._anim_pulse.setKeyValueAt(0.0, 0.0)
+        self._anim_pulse.setKeyValueAt(0.5, 1.0)
+        self._anim_pulse.setKeyValueAt(1.0, 0.0)
+        self._anim_pulse.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self._anim_pulse.start()
+
     def reset_state(self) -> None:
         """Reset overlay to fresh idle state ready for a new summon or drop."""
         if self._shrink_worker is not None and self._shrink_worker.isRunning():
@@ -661,11 +748,25 @@ class DonutWindow(QWidget):
             self._open_anim.stop()
         if self._prediction_anim is not None and self._prediction_anim.state():
             self._prediction_anim.stop()
+        if self._anim_fade_others is not None and self._anim_fade_others.state():
+            self._anim_fade_others.stop()
+        if self._anim_transition is not None and self._anim_transition.state():
+            self._anim_transition.stop()
+        if self._anim_pulse is not None and self._anim_pulse.state():
+            self._anim_pulse.stop()
         for seg in getattr(self, "segments", []):
             if seg._hover_anim is not None and seg._hover_anim.state():
                 seg._hover_anim.stop()
         self._job_queue.clear()
         self._accumulated_results.clear()
+        self._chosen_segment_idx = None
+        self._other_segments_opacity = 1.0
+        self._drop_transition = 0.0
+        self._ring_pulse = 0.0
+        self._ring_progress = 0.0
+        self._countdown_bytes = 0
+        self._orig_size_bytes = 0
+        self._is_fast_job = False
         self.state = "idle"
         self.center_status_text = ""
         self.result_message = None
@@ -738,6 +839,10 @@ class DonutWindow(QWidget):
             self._init_file_data()
 
         self._init_segments()
+        for i, s in enumerate(self.segments):
+            if s.target_bytes == target_bytes:
+                self._chosen_segment_idx = i
+                break
         self.update()
 
         self.queue_or_start_shrink(target_bytes, files=files)
@@ -862,6 +967,7 @@ class DonutWindow(QWidget):
         if idx is not None:
             item = self.segments[idx]
             self.drop_received.emit(dropped_files)
+            self._chosen_segment_idx = idx
             if item.target_bytes is not None:
                 event.acceptProposedAction()
                 self.selected_size = item.label
@@ -926,6 +1032,22 @@ class DonutWindow(QWidget):
         self._current_prediction = None
 
         self.state = "working"
+        self._shrink_start_time = time.monotonic()
+        self._is_fast_job = False
+        self._ring_progress = 0.0
+
+        if self.file_paths and self.file_paths[0].exists():
+            self._orig_size_bytes = self.file_paths[0].stat().st_size
+        else:
+            self._orig_size_bytes = 0
+        self._countdown_bytes = self._orig_size_bytes
+
+        if self._chosen_segment_idx is None:
+            for i, seg in enumerate(self.segments):
+                if seg.target_bytes == target_bytes:
+                    self._chosen_segment_idx = i
+                    break
+
         if len(self.file_paths) > 1:
             self.center_status_text = f"Shrinking (1/{len(self.file_paths)})..."
         else:
@@ -936,6 +1058,7 @@ class DonutWindow(QWidget):
         self.retry_target_bytes = None
         self._retry_rect = None
 
+        self._start_drop_animation()
         self.shrink_started.emit(target_bytes)
 
         worker = ShrinkWorker(
@@ -947,9 +1070,18 @@ class DonutWindow(QWidget):
         _active_shrink_workers.add(worker)
         worker.finished.connect(lambda: _active_shrink_workers.discard(worker))
         worker.progress.connect(self._on_shrink_progress)
+        worker.step_progress.connect(self._on_step_progress)
         worker.results_ready.connect(self._on_shrink_finished)
         worker.start()
         self.update()
+
+    def _on_step_progress(self, progress: float, current_bytes: int) -> None:
+        """Handle real intermediate engine steps from compression worker."""
+        if self.state == "working":
+            self._ring_progress = max(self._ring_progress, float(progress))
+            if current_bytes > 0:
+                self._countdown_bytes = current_bytes
+            self.update()
 
     def _on_shrink_progress(self, cur: int, total: int, name: str) -> None:
         """Handle worker progress updates."""
@@ -1019,6 +1151,17 @@ class DonutWindow(QWidget):
             )
         ]
 
+        elapsed_ms = (time.monotonic() - self._shrink_start_time) * 1000.0
+        if elapsed_ms < 300.0:
+            self._is_fast_job = True
+            # Job took under 300 ms: skip straight to done — no fake progress
+            self._other_segments_opacity = 0.0
+            self._drop_transition = 1.0
+            self._ring_pulse = 0.0
+            self._ring_progress = 1.0
+        else:
+            self._ring_progress = 1.0
+
         if failed_items:
             self.state = "failure"
             _failed_path, failed_res = failed_items[0]
@@ -1047,6 +1190,8 @@ class DonutWindow(QWidget):
                     orig_sz = format_size(res.original_bytes, spaced=True)
                     final_sz = format_size(res.final_bytes, spaced=True)
                     self.result_message = f"{orig_sz} → {final_sz}"
+                    if res.final_bytes > 0:
+                        self._countdown_bytes = res.final_bytes
                 else:
                     self.result_message = "Already ≤ target"
             else:
@@ -1099,6 +1244,7 @@ class DonutWindow(QWidget):
             if idx is not None:
                 item = self.segments[idx]
                 if item.enabled:
+                    self._chosen_segment_idx = idx
                     if item.target_bytes is not None:
                         self.start_shrink(item.target_bytes)
                         event.accept()
@@ -1119,6 +1265,7 @@ class DonutWindow(QWidget):
             if idx is not None:
                 item = self.segments[idx]
                 if item.enabled:
+                    self._chosen_segment_idx = idx
                     if item.target_bytes is not None:
                         self.start_shrink(item.target_bytes)
                         event.accept()
@@ -1147,6 +1294,7 @@ class DonutWindow(QWidget):
         if self.on_select:
             self.on_select(item.label)
 
+        self._chosen_segment_idx = idx
         if item.target_bytes is not None:
             self.start_shrink(item.target_bytes)
             event.accept()
@@ -1217,6 +1365,16 @@ class DonutWindow(QWidget):
         )
 
         for idx in segment_draw_order:
+            if self._chosen_segment_idx is not None:
+                if idx != self._chosen_segment_idx:
+                    seg_alpha_factor = self._other_segments_opacity
+                else:
+                    seg_alpha_factor = max(0.0, 1.0 - self._drop_transition)
+                if seg_alpha_factor <= 0.001:
+                    continue
+            else:
+                seg_alpha_factor = 1.0
+
             seg_geom = self.geometry_calc.segments[idx]
             item = self.segments[idx]
             hp = item.hover_progress
@@ -1246,12 +1404,12 @@ class DonutWindow(QWidget):
             # Hovered segments: bright interactive feedback
             # Dimmed segments: darker recessed tint (never brighter than active)
             if not item.enabled:
-                fill_color = QColor(10, 12, 18, 160)
+                fill_color = QColor(10, 12, 18, int(160 * seg_alpha_factor))
             else:
                 r = int(22 + (45 - 22) * hp)
                 g = int(25 + (52 - 25) * hp)
                 b = int(38 + (75 - 38) * hp)
-                a = int(125 + (190 - 125) * hp)
+                a = int((125 + (190 - 125) * hp) * seg_alpha_factor)
                 fill_color = QColor(r, g, b, a)
 
             painter.setPen(Qt.PenStyle.NoPen)
@@ -1263,16 +1421,18 @@ class DonutWindow(QWidget):
             anchor_scale = 1.0 + ((scale - 1.0) * 0.5)
             anchor = center_pt + QPointF(ax * anchor_scale, ay * anchor_scale)
 
-            if hp > 0.0 and item.enabled:
+            if hp > 0.0 and item.enabled and seg_alpha_factor > 0.1:
                 # Subtle hover tint wash
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QColor(255, 255, 255, int(25 * hp)))
+                painter.setBrush(QColor(255, 255, 255, int(25 * hp * seg_alpha_factor)))
                 painter.drawPath(path)
 
                 # Radial glow behind label
                 glow = QRadialGradient(anchor, 42.0)
-                glow.setColorAt(0.0, QColor(255, 255, 255, int(45 * hp)))
-                glow.setColorAt(0.6, QColor(255, 255, 255, int(18 * hp)))
+                alpha_glow = int(45 * hp * seg_alpha_factor)
+                glow.setColorAt(0.0, QColor(255, 255, 255, alpha_glow))
+                alpha_glow_mid = int(18 * hp * seg_alpha_factor)
+                glow.setColorAt(0.6, QColor(255, 255, 255, alpha_glow_mid))
                 glow.setColorAt(1.0, QColor(255, 255, 255, 0))
                 painter.setBrush(QBrush(glow))
                 painter.drawEllipse(anchor, 42.0, 42.0)
@@ -1281,7 +1441,8 @@ class DonutWindow(QWidget):
                 path_outer_hover = QPainterPath()
                 path_outer_hover.arcMoveTo(seg_outer_rect, start_qt)
                 path_outer_hover.arcTo(seg_outer_rect, start_qt, sweep_qt)
-                painter.setPen(QPen(QColor(165, 225, 255, int(180 * hp)), 2.0))
+                pen_col = QColor(165, 225, 255, int(180 * hp * seg_alpha_factor))
+                painter.setPen(QPen(pen_col, 2.0))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawPath(path_outer_hover)
 
@@ -1296,11 +1457,11 @@ class DonutWindow(QWidget):
             text_rect = QRectF(anchor.x() - 45.0, anchor.y() - 12.0, 90.0, 24.0)
 
             if item.enabled:
-                label_color = QColor(255, 255, 255, 255)
-                shadow_color = QColor(0, 0, 0, 160)
+                label_color = QColor(255, 255, 255, int(255 * seg_alpha_factor))
+                shadow_color = QColor(0, 0, 0, int(160 * seg_alpha_factor))
             else:
-                label_color = QColor(160, 172, 195, 175)
-                shadow_color = QColor(0, 0, 0, 140)
+                label_color = QColor(160, 172, 195, int(175 * seg_alpha_factor))
+                shadow_color = QColor(0, 0, 0, int(140 * seg_alpha_factor))
 
             # Text shadow for maximum legibility on any wallpaper
             painter.setPen(shadow_color)
@@ -1317,16 +1478,18 @@ class DonutWindow(QWidget):
             )
 
         # 4. Continuous outer specular rim & inner ring highlight
-        rim_grad = QLinearGradient(
-            QPointF(center_x, center_y - r_out),
-            QPointF(center_x, center_y + r_out),
-        )
-        rim_grad.setColorAt(0.0, QColor(255, 255, 255, 95))
-        rim_grad.setColorAt(0.4, QColor(255, 255, 255, 40))
-        rim_grad.setColorAt(1.0, QColor(255, 255, 255, 15))
-        painter.setPen(QPen(QBrush(rim_grad), 1.2))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawEllipse(outer_rect)
+        if self._other_segments_opacity > 0.01:
+            rim_grad = QLinearGradient(
+                QPointF(center_x, center_y - r_out),
+                QPointF(center_x, center_y + r_out),
+            )
+            op = self._other_segments_opacity
+            rim_grad.setColorAt(0.0, QColor(255, 255, 255, int(95 * op)))
+            rim_grad.setColorAt(0.4, QColor(255, 255, 255, int(40 * op)))
+            rim_grad.setColorAt(1.0, QColor(255, 255, 255, int(15 * op)))
+            painter.setPen(QPen(QBrush(rim_grad), 1.2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(outer_rect)
 
         # Inner ring highlight: seamless continuous bright circle
         painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
@@ -1334,27 +1497,29 @@ class DonutWindow(QWidget):
         painter.drawEllipse(inner_rect)
 
         # 5. Segment separators: etched glass grooves (shadow line + specular highlight)
-        for seg_geom in self.geometry_calc.segments:
-            rad = math.radians(seg_geom.start_angle)
-            sin_rad = math.sin(rad)
-            cos_rad = math.cos(rad)
-            x1 = center_x + r_in * sin_rad
-            y1 = center_y - r_in * cos_rad
-            x2 = center_x + r_out * sin_rad
-            y2 = center_y - r_out * cos_rad
+        if self._other_segments_opacity > 0.05:
+            op = self._other_segments_opacity
+            for seg_geom in self.geometry_calc.segments:
+                rad = math.radians(seg_geom.start_angle)
+                sin_rad = math.sin(rad)
+                cos_rad = math.cos(rad)
+                x1 = center_x + r_in * sin_rad
+                y1 = center_y - r_in * cos_rad
+                x2 = center_x + r_out * sin_rad
+                y2 = center_y - r_out * cos_rad
 
-            # Subtle shadow groove line
-            painter.setPen(QPen(QColor(0, 0, 0, 60), 1.0))
-            painter.drawLine(
-                QPointF(x1 - cos_rad * 0.5, y1 - sin_rad * 0.5),
-                QPointF(x2 - cos_rad * 0.5, y2 - sin_rad * 0.5),
-            )
-            # Light specular line
-            painter.setPen(QPen(QColor(255, 255, 255, 35), 1.0))
-            painter.drawLine(
-                QPointF(x1 + cos_rad * 0.5, y1 + sin_rad * 0.5),
-                QPointF(x2 + cos_rad * 0.5, y2 + sin_rad * 0.5),
-            )
+                # Subtle shadow groove line
+                painter.setPen(QPen(QColor(0, 0, 0, int(60 * op)), 1.0))
+                painter.drawLine(
+                    QPointF(x1 - cos_rad * 0.5, y1 - sin_rad * 0.5),
+                    QPointF(x2 - cos_rad * 0.5, y2 - sin_rad * 0.5),
+                )
+                # Light specular line
+                painter.setPen(QPen(QColor(255, 255, 255, int(35 * op)), 1.0))
+                painter.drawLine(
+                    QPointF(x1 + cos_rad * 0.5, y1 + sin_rad * 0.5),
+                    QPointF(x2 + cos_rad * 0.5, y2 + sin_rad * 0.5),
+                )
 
         painter.restore()
 
@@ -1373,47 +1538,129 @@ class DonutWindow(QWidget):
         painter.drawEllipse(card_rect)
 
         if self.state == "working":
-            # Working state in centre
-            font_work = QFont()
-            font_work.setPointSize(11)
-            font_work.setBold(True)
-            painter.setFont(font_work)
-            work_rect = QRectF(
+            # Working state: Ring around thumbnail with progress and size countdown
+            thumb_cx = center_x
+            thumb_cy = center_y - 20.0
+            max_thumb = 44.0
+            thumb_ring_r = 29.0 * (1.0 + 0.08 * self._ring_pulse)
+
+            # Circular track around thumbnail
+            painter.setPen(QPen(QColor(255, 255, 255, 30), 3.5, Qt.PenStyle.SolidLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(thumb_cx, thumb_cy), thumb_ring_r, thumb_ring_r)
+
+            # Active real progress arc
+            prog = max(0.0, min(1.0, self._ring_progress))
+            if prog > 0.0:
+                painter.setPen(
+                    QPen(
+                        QColor(56, 189, 248, 255),
+                        3.5,
+                        Qt.PenStyle.SolidLine,
+                        Qt.PenCapStyle.RoundCap,
+                    )
+                )
+                arc_rect = QRectF(
+                    thumb_cx - thumb_ring_r,
+                    thumb_cy - thumb_ring_r,
+                    thumb_ring_r * 2.0,
+                    thumb_ring_r * 2.0,
+                )
+                # 90 degrees in Qt is 12 o'clock, negative angle sweeps clockwise
+                painter.drawArc(arc_rect, 90 * 16, -int(prog * 360.0 * 16.0))
+
+            # Thumbnail inside ring
+            if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
+                tw = min(max_thumb, float(self.thumbnail_pixmap.width()))
+                th = min(max_thumb, float(self.thumbnail_pixmap.height()))
+                tx = thumb_cx - (tw / 2.0)
+                ty = thumb_cy - (th / 2.0)
+
+                shadow_rect = QRectF(tx - 2.0, ty + 2.0, tw + 4.0, th + 4.0)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, 110))
+                painter.drawRoundedRect(shadow_rect, 8.0, 8.0)
+
+                painter.save()
+                clip_path = QPainterPath()
+                clip_path.addRoundedRect(QRectF(tx, ty, tw, th), 6.0, 6.0)
+                painter.setClipPath(clip_path)
+                painter.drawPixmap(
+                    int(tx),
+                    int(ty),
+                    self.thumbnail_pixmap.scaled(
+                        int(tw),
+                        int(th),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    ),
+                )
+                painter.restore()
+
+                painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(QRectF(tx, ty, tw, th), 6.0, 6.0)
+            else:
+                icon_w, icon_h = 24.0, 30.0
+                icon_rect = QRectF(
+                    thumb_cx - (icon_w / 2.0),
+                    thumb_cy - (icon_h / 2.0),
+                    icon_w,
+                    icon_h,
+                )
+                painter.setPen(QPen(QColor(161, 161, 170, 220), 1.5))
+                painter.setBrush(QColor(39, 39, 42, 200))
+                painter.drawRoundedRect(icon_rect, 4.0, 4.0)
+
+            # Filename below ring
+            font_name = QFont()
+            font_name.setPointSize(9)
+            font_name.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font_name)
+            fm = QFontMetrics(font_name)
+            name_w = int((center_card_r - 8.0) * 2)
+            elided_name = fm.elidedText(
+                self.file_name, Qt.TextElideMode.ElideMiddle, name_w
+            )
+            name_rect = QRectF(
                 center_x - center_card_r + 8.0,
-                center_y - 18.0,
-                (center_card_r - 8.0) * 2,
-                22.0,
+                center_y + 14.0,
+                name_w,
+                16.0,
             )
             painter.setPen(QColor(0, 0, 0, 160))
             painter.drawText(
-                work_rect.adjusted(0, 1, 0, 1),
+                name_rect.adjusted(0, 1, 0, 1),
                 Qt.AlignmentFlag.AlignCenter,
-                "Working…",
+                elided_name,
             )
-            painter.setPen(QColor(165, 225, 255, 255))
-            painter.drawText(work_rect, Qt.AlignmentFlag.AlignCenter, "Working…")
+            painter.setPen(QColor(240, 245, 255, 240))
+            painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
 
-            font_sub = QFont()
-            font_sub.setPointSize(9)
-            painter.setFont(font_sub)
-            sub_rect = QRectF(
+            # Live size countdown below filename
+            font_count = QFont()
+            font_count.setPointSize(11)
+            font_count.setBold(True)
+            painter.setFont(font_count)
+            cur_sz_str = (
+                format_size(self._countdown_bytes, spaced=True)
+                if self._countdown_bytes > 0
+                else "..."
+            )
+            count_rect = QRectF(
                 center_x - center_card_r + 8.0,
-                center_y + 8.0,
+                center_y + 33.0,
                 (center_card_r - 8.0) * 2,
-                18.0,
+                22.0,
             )
-            painter.setPen(QColor(0, 0, 0, 140))
+            painter.setPen(QColor(0, 0, 0, 180))
             painter.drawText(
-                sub_rect.adjusted(0, 1, 0, 1),
+                count_rect.adjusted(0, 1, 0, 1),
                 Qt.AlignmentFlag.AlignCenter,
-                self.center_status_text or "Shrinking...",
+                cur_sz_str,
             )
-            painter.setPen(QColor(200, 210, 225, 230))
-            painter.drawText(
-                sub_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                self.center_status_text or "Shrinking...",
-            )
+            painter.setPen(QColor(56, 189, 248, 255))
+            painter.drawText(count_rect, Qt.AlignmentFlag.AlignCenter, cur_sz_str)
 
         elif self.state == "success":
             # Success state in centre
