@@ -270,11 +270,24 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added test suites in `tests/test_config_precedence.py` (4 tests), `tests/test_config_subcommands.py` (3 tests), and `tests/daemon/test_daemon_config_reload.py` (2 tests), bringing test suite to 327 tests.
   - VERIFY: `scripts/verify_config_subcommands.py` verified setting changes propagate across `smol shrink`, `smol integrate`, and `smol daemon`. Tagged `v0.6.0`.
 
+- Implement smol/core/pdf.py PDF compression engine (Milestone M7 / PLAN.md Section 7.2):
+  - Created `shrink_pdf(src, target_bytes, options)` using a 6-rung Ghostscript ladder at decreasing DPI (200→150→120→96→72→60) and JPEG quality (~80→50) via PostScript `/ColorImageDict` and `/GrayImageDict` `/QFactor` distiller parameters.
+  - Stops at the first (highest quality) rung whose output fits `<= target_bytes`.
+  - Runs `qpdf --object-streams=generate` for object stream optimisation on intermediate outputs.
+  - Validates syntactic integrity with `qpdf --check --warning-exit-0` before acceptance.
+  - Safe subprocess execution with list arguments, never shell strings.
+  - Atomic writes in the destination directory using temporary file replacement, with immediate cleanup of temp files on failure or error.
+  - Honest failure reporting when impossible (smallest achievable size reported) and for incompressible text-only PDFs.
+  - Bypass for already `<= target_bytes` files returning `ok=True` without writing duplicates or touching original.
+  - Added sample generators `make_scanned_pdf` (~4.87 MB multi-page scanned PDF at 300 DPI) and `make_text_pdf` (vector text PDF).
+  - Added test suite in `tests/core/test_pdf.py` (9 tests) and verification harness `scripts/verify_pdf_engine.py`.
+  - VERIFY: ~4.87 MB scanned PDF goes to 415.33 KB (under 1 MB target) in 2 steps, and `qpdf --check` passes cleanly (exit code 0); text-only PDF fails honestly reporting smallest achievable size; all 336 tests pass; ruff clean.
+
 ## Current milestone
-M7 — PDF engine (PLAN.md Section 7.2).
+M7 — PDF engine (Complete).
 
 ## Next
-- M7 — PDF engine: shrink scanned/vector PDF files using Ghostscript (`gs`) and `qpdf` down to target bytes while preserving readability.
+- M8 — Video/audio engine (PLAN.md Section 7.3): two-pass x264 downscaling, duration discovery via ffprobe, and audio bitrate floor handling.
 
 
 ## Decisions
@@ -285,9 +298,11 @@ M7 — PDF engine (PLAN.md Section 7.2).
 - 2026-10-19: Pre-build DonutWindow hidden during daemon startup to eliminate cold-start widget initialization latency on first user summon.
 - 2026-10-19: Adopt 80 ms idle keymap polling with fast-path unchanged keymap skip in X11EventListener, achieving ~0% idle CPU while keeping key response time under ~80 ms.
 - 2026-10-19: Enforce strict configuration hierarchy: CLI flag > config file > default across all engine and CLI subcommands.
+- 2026-10-19: In `smol/core/pdf.py`, use Ghostscript downsampling ladder (DPI 200→60, QFactor 0.40→1.00) + `qpdf --object-streams=generate`, stopping at first matching rung and validating syntax with `qpdf --check`.
 
 ## Known limits (v0.6.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
 - Decompression bomb threshold: images exceeding 89.5 million pixels are safely rejected to protect system memory.
+- PDF: Incompressible text-only vector PDFs or PDFs already below downsampling limits report honest failures stating smallest achievable size.

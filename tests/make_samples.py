@@ -18,6 +18,8 @@ Generates 11 sample images into tests/samples/ (git-ignored):
 from __future__ import annotations
 
 import random
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pillow_heif
@@ -42,6 +44,11 @@ SAMPLE_FILES = {
     "sample_heic": "sample.heic",
     "sample_avif": "sample.avif",
     "forty_mp": "forty_mp.jpg",
+}
+
+PDF_SAMPLE_FILES = {
+    "sample_scanned": "sample_scanned.pdf",
+    "sample_text": "sample_text.pdf",
 }
 
 
@@ -260,6 +267,82 @@ def make_forty_mp_jpeg(path: Path) -> None:
     img.save(path, format="JPEG", quality=80)
 
 
+def make_scanned_pdf(path: Path) -> None:
+    """Scanned-like multi-page PDF (~5 MB, 3 pages, paper texture at 300 DPI)."""
+    random.seed(110)
+    w, h = 1700, 2300
+    pages = []
+    for page_num in range(1, 4):
+        page = Image.new("RGB", (w, h), (250, 248, 244))
+        draw = ImageDraw.Draw(page)
+        # Header banner
+        draw.rectangle([(100, 80), (w - 100, 140)], fill=(220, 225, 230))
+        draw.text((120, 100), f"SCANNED DOCUMENT - PAGE {page_num}", fill=(20, 20, 20))
+        # Simulated text lines
+        for y in range(180, h - 200, 36):
+            if page_num == 2 and 500 <= y <= 1100:
+                continue
+            line_w = random.randint(int(w * 0.6), w - 240)
+            draw.line(
+                [(120, y), (120 + line_w, y)],
+                fill=(35, 35, 40),
+                width=random.randint(2, 3),
+            )
+        # Simulated figure on page 2
+        if page_num == 2:
+            draw.rectangle(
+                [(200, 500), (w - 200, 1100)],
+                fill=(130, 160, 190),
+                outline=(50, 70, 90),
+                width=3,
+            )
+        # Add scanner grain / sensor noise
+        noise = Image.frombytes("RGB", (w, h), random.randbytes(w * h * 3))
+        blended = Image.blend(page, noise, 0.15)
+        pages.append(blended)
+
+    pages[0].save(
+        path,
+        format="PDF",
+        save_all=True,
+        append_images=pages[1:],
+        resolution=300.0,
+        quality=92,
+    )
+
+
+def make_text_pdf(path: Path) -> None:
+    """Text-only vector PDF without bitmap images."""
+    ps_content = (
+        b"%!PS-Adobe-3.0\n"
+        b"/Helvetica findfont 12 scalefont setfont\n"
+        b"72 720 moveto\n"
+        b"(Smol Engine Text-Only PDF Document) show\n"
+        b"72 700 moveto\n"
+        b"(This document contains pure vector text and no bitmap images.) show\n"
+        b"72 680 moveto\n"
+        b"(Ghostscript downsampling ladder cannot shrink this text.) show\n"
+        b"showpage\n"
+    )
+    with tempfile.NamedTemporaryFile(suffix=".ps", delete=False) as ps_file:
+        ps_path = Path(ps_file.name)
+        ps_path.write_bytes(ps_content)
+    try:
+        cmd = [
+            "gs",
+            "-dNOPAUSE",
+            "-dBATCH",
+            "-dQUIET",
+            "-sDEVICE=pdfwrite",
+            f"-sOutputFile={path}",
+            str(ps_path),
+        ]
+        subprocess.run(cmd, check=True)
+    finally:
+        if ps_path.exists():
+            ps_path.unlink()
+
+
 GENERATORS = {
     "portrait.jpg": make_portrait_jpeg,
     "landscape.jpg": make_landscape_jpeg,
@@ -277,13 +360,22 @@ GENERATORS = {
     "forty_mp.jpg": make_forty_mp_jpeg,
 }
 
+PDF_GENERATORS = {
+    "sample_scanned.pdf": make_scanned_pdf,
+    "sample_text.pdf": make_text_pdf,
+}
+
 
 def generate_all_samples(dest_dir: Path | None = None) -> Path:
-    """Generate all sample images into dest_dir (defaults to tests/samples/)."""
+    """Generate all sample files into dest_dir (defaults to tests/samples/)."""
     target_dir = Path(dest_dir) if dest_dir is not None else DEFAULT_SAMPLES_DIR
     target_dir.mkdir(parents=True, exist_ok=True)
 
     for filename, generator in GENERATORS.items():
+        file_path = target_dir / filename
+        generator(file_path)
+
+    for filename, generator in PDF_GENERATORS.items():
         file_path = target_dir / filename
         generator(file_path)
 
@@ -292,6 +384,7 @@ def generate_all_samples(dest_dir: Path | None = None) -> Path:
 
 if __name__ == "__main__":
     out_dir = generate_all_samples()
-    print(f"Generated {len(GENERATORS)} sample files in: {out_dir}")
+    total_samples = len(GENERATORS) + len(PDF_GENERATORS)
+    print(f"Generated {total_samples} sample files in: {out_dir}")
     for p in sorted(out_dir.iterdir()):
         print(f"  {p.name:25s} {p.stat().st_size:>10,d} bytes")

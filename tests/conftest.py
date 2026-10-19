@@ -10,6 +10,7 @@ if str(REPO_ROOT) not in sys.path:
 from tests.make_samples import (  # noqa: E402
     DEFAULT_SAMPLES_DIR,
     GENERATORS,
+    PDF_GENERATORS,
     generate_all_samples,
 )
 
@@ -21,7 +22,8 @@ def samples_dir() -> Path:
     Reuses already generated samples if all expected files are present.
     """
     DEFAULT_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-    missing = [f for f in GENERATORS if not (DEFAULT_SAMPLES_DIR / f).exists()]
+    all_expected = list(GENERATORS) + list(PDF_GENERATORS)
+    missing = [f for f in all_expected if not (DEFAULT_SAMPLES_DIR / f).exists()]
     if missing:
         generate_all_samples(DEFAULT_SAMPLES_DIR)
     return DEFAULT_SAMPLES_DIR
