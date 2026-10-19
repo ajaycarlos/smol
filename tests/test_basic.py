@@ -20,7 +20,7 @@ def test_cli_version():
         check=False,
     )
     assert result.returncode == 0
-    assert "0.7.0" in result.stdout
+    assert "0.8.0" in result.stdout
 
 
 def test_cli_doctor_no_args(monkeypatch: pytest.MonkeyPatch) -> None:

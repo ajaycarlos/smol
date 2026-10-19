@@ -352,6 +352,7 @@ class DonutWindow(QWidget):
     shrink_failed = Signal(str, object)
     drop_received = Signal(list)
     dismissed = Signal(str)
+    step_progress_received = Signal(float, int)
 
     def __init__(
         self,
@@ -900,8 +901,10 @@ class DonutWindow(QWidget):
         return 0
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Esc key dismisses the overlay and any open custom dialog."""
+        """Esc key dismisses the overlay and cancels any active compression worker."""
         if event.key() == Qt.Key.Key_Escape:
+            if self._shrink_worker is not None and self._shrink_worker.isRunning():
+                self._shrink_worker.cancel()
             if self._custom_dialog is not None and self._custom_dialog.isVisible():
                 self._custom_dialog.close()
             self.dismissed.emit("esc")
@@ -1194,6 +1197,7 @@ class DonutWindow(QWidget):
             self._ring_progress = max(self._ring_progress, float(progress))
             if current_bytes > 0:
                 self._countdown_bytes = current_bytes
+            self.step_progress_received.emit(float(progress), int(current_bytes))
             self.update()
 
     def _on_shrink_progress(self, cur: int, total: int, name: str) -> None:
@@ -1224,8 +1228,16 @@ class DonutWindow(QWidget):
                 ".mkv",
                 ".webm",
                 ".avi",
+                ".mp3",
+                ".m4a",
+                ".aac",
+                ".opus",
+                ".ogg",
+                ".flac",
+                ".wav",
             ):
                 return p
+
         return self.file_paths[0] if self.file_paths else None
 
     def _on_shrink_finished(self, results: list[tuple[Path, Result]]) -> None:

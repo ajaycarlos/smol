@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -33,8 +32,9 @@ from smol.core.media_math import (
     probe_media,
 )
 from smol.core.paths import output_path
-from smol.core.result import Result
+from smol.core.result import CancellationError, Result
 from smol.core.size import format_size, parse_size
+from smol.core.video import _stream_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +207,8 @@ def shrink_audio(
         config.strip_metadata if config else True,
     )
     step_callback: Callable[[float, int], None] | None = opts.get("step_callback")
+    cancel_check = opts.get("cancel_check")
+    on_process_started = opts.get("on_process_started")
 
     attempt = 0
     current_bitrate = bitrate_bps
@@ -218,14 +220,9 @@ def shrink_audio(
             if temp_out_path.exists():
                 temp_out_path.unlink()
 
-            if step_callback:
-                step_callback(attempt / (MAX_RETRIES + 1), orig_bytes)
-
             cmd = [
                 ffmpeg_bin,
                 "-y",
-                "-v",
-                "error",
                 "-i",
                 str(src_path),
                 "-vn",
@@ -245,16 +242,17 @@ def shrink_audio(
 
             cmd.append(str(temp_out_path))
 
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=False,
+            _stream_ffmpeg(
+                cmd=cmd,
+                duration=duration,
+                orig_bytes=orig_bytes,
+                target_bytes=target_bytes,
+                pass_index=1,
+                total_passes=1,
+                step_callback=step_callback,
+                cancel_check=cancel_check,
+                on_process_started=on_process_started,
             )
-
-            if proc.returncode != 0:
-                err_text = proc.stderr.strip() or f"exit code {proc.returncode}"
-                raise RuntimeError(f"ffmpeg audio encoding failed: {err_text}")
 
             if not temp_out_path.exists():
                 raise RuntimeError(
@@ -323,6 +321,13 @@ def shrink_audio(
             ),
         )
 
+    except CancellationError:
+        return Result(
+            ok=False,
+            original_bytes=orig_bytes,
+            steps=attempt,
+            error="Audio compression cancelled",
+        )
     except (RuntimeError, OSError, ValueError) as exc:
         return Result(
             ok=False,
@@ -330,6 +335,7 @@ def shrink_audio(
             steps=attempt,
             error=f"Audio compression failed: {exc}",
         )
+
     finally:
         if temp_out_path.exists():
             try:

@@ -340,13 +340,33 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Created standalone verification script `scripts/verify_audio_shrink.py`.
   - VERIFY: a 3-minute generated tone (180s, ~4.32 MB) shrinks to 1 MB target, landing at 900.41 KB (90.04% of target), and passes complete decode/playback check with 0 errors; full test suite (391 passed in ~49s); `uv run ruff check .` clean.
 
+- Parse ffmpeg `-progress pipe:1` output into progress events and size countdown (`smol/core/video.py`, `smol/core/audio.py`):
+  - Streamed ffmpeg progress output via `subprocess.Popen(bufsize=1)` parsing `out_time_us` against media duration.
+  - Emits normalized progress fractions across passes (video pass 1: 0.0–0.5, pass 2: 0.5–1.0; audio: 0.0–1.0) and live countdown bytes (`orig_bytes - diff * p`).
+  - Added cooperative cancellation check and process registration via `cancel_check` and `on_process_started`.
+- Clean cancellation and process cleanup (`smol/ui/worker.py`, `smol/ui/donut_window.py`):
+  - Wired `Esc` key press in `DonutWindow` to cancel active compression worker.
+  - In `ShrinkWorker`, tracking active `subprocess.Popen` with thread safety and killing the ffmpeg process (`SIGKILL`) immediately on `cancel()`.
+  - Guaranteed removal of partial output files and pass-log directories on cancellation, leaving 0 leftover files and 0 orphaned processes.
+- Wire video and audio into Donut UI, CLI, and file managers:
+  - Removed legacy video stub in `ShrinkWorker`, enabling real background compression for all supported video and audio formats.
+  - Added audio formats (`.mp3`, `.m4a`, `.aac`, `.opus`, `.ogg`, `.flac`, `.wav`) to `DonutWindow` first path prediction loader.
+  - Updated right-click file manager integrations in `smol/integrations/manager.py` for Nemo, Dolphin, and Thunar to include all video and audio extensions and MIME types.
+- Release v0.8.0:
+  - Bumped project version to `0.8.0` in `pyproject.toml`, `smol/cli.py`, `tests/test_basic.py`, and `uv.lock`.
+  - Added test suite coverage in `tests/core/test_video.py`, `tests/core/test_audio.py`, `tests/ui/test_shrink_worker.py`, `tests/ui/test_donut_window.py`, `tests/test_cli_shrink.py`, and `tests/test_integrate.py`.
+  - Created automated verification script `scripts/verify_video_donut_flow.py`.
+  - VERIFY: Shrinking video from donut shows moving progress (5 steps, 1.0% to 100.0%); Esc cancels cleanly with no partial file left behind; right-click configs include video/audio; full test suite passes (401 passed in ~55s); `uv run ruff check .` clean. Tagged `v0.8.0`.
+
 ## Current milestone
-M8 — Video and audio engine (In progress).
+M8 — Video and audio engine (Completed — v0.8.0).
 
 ## Next
-- Video/audio integration review and Milestone M8 completion.
+- Milestone M9: Packaging, polish, and system integration.
 
 ## Decisions
+- 2026-10-20: In `smol/core/video.py` and `smol/core/audio.py`, stream ffmpeg execution via `-progress pipe:1 -nostats` in line-buffered `subprocess.Popen`, parsing `out_time_us` against media duration and emitting normalized ring progress fractions and live byte countdowns on `progress=` block completions.
+- 2026-10-20: In `smol/ui/worker.py`, maintain thread-safe registration of active child subprocesses (`_active_proc`) and immediately issue `proc.kill()` on `cancel()`, handling exit code -9 / `CancellationError` to unlink partial output files and leave zero disk leftovers.
 - 2026-10-20: In `smol/core/audio.py`, match input audio families (`.mp3` -> `libmp3lame`, `.m4a`/`.aac` -> `aac`, `.opus`/`.ogg` -> `libopus`). For `libopus`, specify `-vbr constrained` to ensure adherence to calculated target bitrates.
 - 2026-10-20: In `smol/core/audio.py`, enforce strict 24 kbps floor via `compute_audio_bitrate` with 0.92 safety margin, failing honestly with smallest achievable size when target bandwidth is too low.
 - 2026-10-19: In `smol/core/video.py`, isolate ffmpeg pass logs in a dedicated temporary directory (`smol_passlog_*`) deleted in a `finally` block, ensuring no dangling `ffmpeg2pass*` files on disk even during failures or exceptions.
@@ -362,9 +382,9 @@ M8 — Video and audio engine (In progress).
 - 2026-10-19: In `smol/core/pdf.py`, use Ghostscript downsampling ladder (DPI 200→60, QFactor 0.40→1.00) + `qpdf --object-streams=generate`, stopping at first matching rung and validating syntax with `qpdf --check`.
 - 2026-10-19: Implement unified file-type router in `smol/core/router.py` streaming Ghostscript ladder rung numbers as progress fractions into Donut progress rings.
 
-## Known limits (v0.7.0)
+## Known limits (v0.8.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
-- Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
+- Incompressible or sub-floor data: if minimum dimension floor (default 200 px) or minimum bitrate floor (24 kbps audio) still exceeds target, engine honestly fails rather than producing unusable corrupted files or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
 - Decompression bomb threshold: images exceeding 89.5 million pixels are safely rejected to protect system memory.
 - PDF: Incompressible text-only vector PDFs or PDFs already below downsampling limits report honest failures stating smallest achievable size.

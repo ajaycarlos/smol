@@ -164,3 +164,71 @@ def test_shrink_worker_pdf_success_and_rung_progress(
         assert 0.0 < frac <= 1.0
         assert cand_bytes > 0
 
+
+def test_shrink_worker_video_real_progress(qapp, tmp_path: Path):
+    """ShrinkWorker processes video files and emits real ffmpeg progress."""
+    from tests.core.test_video import _generate_synthetic_video
+
+    video_path = tmp_path / "worker_video.mp4"
+    _generate_synthetic_video(video_path, duration=3.0, width=640, height=360)
+    target_bytes = 350_000
+
+    step_events: list[tuple[float, int]] = []
+    results_received: list[list[tuple[Path, Result]]] = []
+
+    worker = ShrinkWorker(
+        files=[video_path], target_bytes=target_bytes, pace_steps=False
+    )
+    worker.step_progress.connect(
+        lambda frac, cur_bytes: step_events.append((frac, cur_bytes))
+    )
+    worker.results_ready.connect(lambda res: results_received.append(res))
+
+    worker.start()
+    finished = wait_for_signal(worker, timeout_ms=10000)
+    assert finished is True
+
+    assert len(results_received) == 1
+    src, res = results_received[0][0]
+    assert src == video_path
+    assert res.ok is True, f"Shrink failed: {res.error}"
+    assert res.final_bytes <= target_bytes
+    assert res.output_path is not None
+    assert res.output_path.exists()
+    assert res.output_path.suffix == ".mp4"
+
+    # Verify that real progress events were emitted with countdown bytes
+    assert len(step_events) >= 2
+    for frac, cand_bytes in step_events:
+        assert 0.0 <= frac <= 1.0
+        assert cand_bytes > 0
+
+
+def test_shrink_worker_cancel_kills_process(qapp, tmp_path: Path):
+    """Calling worker.cancel() kills ffmpeg and deletes partial file."""
+    import time
+
+    from tests.core.test_video import _generate_synthetic_video
+
+
+    video_path = tmp_path / "cancel_worker_video.mp4"
+    _generate_synthetic_video(video_path, duration=8.0, width=1280, height=720)
+    target_bytes = 400_000
+
+    worker = ShrinkWorker(
+        files=[video_path], target_bytes=target_bytes, pace_steps=False
+    )
+
+    worker.start()
+    # Wait until worker begins processing
+    time.sleep(0.4)
+    worker.cancel()
+
+    finished = wait_for_signal(worker, timeout_ms=5000)
+    assert finished is True
+
+    # No partial output files should exist
+    output_files = list(tmp_path.glob("cancel_worker_video*.mp4"))
+    assert output_files == [video_path]
+
+

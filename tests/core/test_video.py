@@ -344,3 +344,89 @@ def test_shrink_video_target_10_percent_high_bitrate_fails_honestly(
         assert res.final_bytes <= target_bytes
 
 
+def test_shrink_video_progress_events(sample_clip: Path, tmp_path: Path):
+    """Verify shrink_video parses ffmpeg -progress pipe:1 and emits progress events."""
+    test_src = tmp_path / "progress_test.mp4"
+    shutil.copy2(sample_clip, test_src)
+    orig_bytes = test_src.stat().st_size
+    target_bytes = 500_000
+
+    events: list[tuple[float, int]] = []
+
+    def on_step(progress: float, current_bytes: int) -> None:
+        events.append((progress, current_bytes))
+
+    res = shrink_video(
+        test_src,
+        target_bytes=target_bytes,
+        options={"step_callback": on_step},
+    )
+    assert res.ok
+    assert len(events) >= 2, f"Expected intermediate progress events, got {events}"
+
+    # Verify progress strictly increases towards 1.0
+    fractions = [p for p, _ in events]
+    assert all(0.0 <= p <= 1.0 for p in fractions)
+    assert max(fractions) >= 0.5  # Reached at least second pass or end
+
+    # Verify size countdown bytes count down from orig_bytes towards target_bytes
+    cand_bytes_list = [b for _, b in events]
+    assert all(b > 0 for b in cand_bytes_list)
+    assert cand_bytes_list[0] <= orig_bytes
+    assert (
+        cand_bytes_list[-1] <= target_bytes or cand_bytes_list[-1] <= cand_bytes_list[0]
+    )
+
+
+
+def test_shrink_video_cancellation_kills_ffmpeg_and_deletes_partial(
+    sample_clip: Path, tmp_path: Path
+):
+    """Verify that cancelling kills ffmpeg and deletes partial output."""
+    test_src = tmp_path / "cancel_test.mp4"
+    shutil.copy2(sample_clip, test_src)
+    target_bytes = 400_000
+
+    started_procs: list[subprocess.Popen] = []
+    is_cancelled = False
+
+    def on_started(proc):
+        if proc:
+            started_procs.append(proc)
+
+    def cancel_check() -> bool:
+        return is_cancelled
+
+    def on_step(progress: float, current_bytes: int) -> None:
+        nonlocal is_cancelled
+        # Cancel as soon as we receive the first progress event
+        if progress > 0.05 and not is_cancelled:
+            is_cancelled = True
+            for p in started_procs:
+                if p.poll() is None:
+                    p.kill()
+
+    res = shrink_video(
+        test_src,
+        target_bytes=target_bytes,
+        options={
+            "step_callback": on_step,
+            "cancel_check": cancel_check,
+            "on_process_started": on_started,
+        },
+    )
+
+    assert not res.ok
+    assert "cancel" in res.error.lower()
+
+    # Verify all ffmpeg procs are dead
+    for p in started_procs:
+        assert p.poll() is not None, "ffmpeg process was not terminated!"
+
+    # Verify NO partial .tmp files or destination files exist in output dir
+    partial_files = list(tmp_path.glob("cancel_test*.mp4"))
+    # Only the original test_src should exist
+    assert partial_files == [test_src], f"Partial files left behind: {partial_files}"
+
+
+

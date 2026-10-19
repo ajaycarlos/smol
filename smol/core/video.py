@@ -32,13 +32,132 @@ from smol.core.media_math import (
     probe_media,
 )
 from smol.core.paths import output_path
-from smol.core.result import Result
+from smol.core.result import CancellationError, Result
 from smol.core.size import format_size, parse_size
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_BITRATE_CUT = 0.95  # 5% cut per retry
+
+
+def _parse_time_to_seconds(time_str: str) -> float | None:
+    """Parse HH:MM:SS.micro or seconds into float."""
+    try:
+        parts = time_str.split(":")
+        if len(parts) == 3:
+            return float(parts[0]) * 3600.0 + float(parts[1]) * 60.0 + float(parts[2])
+        elif len(parts) == 2:
+            return float(parts[0]) * 60.0 + float(parts[1])
+        return float(time_str)
+    except (ValueError, TypeError):
+        return None
+
+
+def _stream_ffmpeg(
+    cmd: list[str],
+    duration: float,
+    orig_bytes: int,
+    target_bytes: int,
+    pass_index: int,
+    total_passes: int,
+    step_callback: Callable[[float, int], None] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
+    on_process_started: Callable[[subprocess.Popen | None], None] | None = None,
+) -> None:
+    """Execute ffmpeg command, parsing -progress pipe:1 into progress events."""
+    full_cmd = list(cmd)
+    if "-progress" not in full_cmd:
+        full_cmd.extend(["-progress", "pipe:1", "-nostats"])
+
+    proc = subprocess.Popen(
+        full_cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    if on_process_started:
+        on_process_started(proc)
+
+    current_out_s = 0.0
+    try:
+        if proc.stdout:
+            for line in proc.stdout:
+                if cancel_check and cancel_check():
+                    if proc.poll() is None:
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                    break
+
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip()
+
+                if k == "out_time_us":
+                    try:
+                        current_out_s = max(0.0, float(v) / 1_000_000.0)
+                    except ValueError:
+                        pass
+                elif k == "out_time" and current_out_s == 0.0 and v != "N/A":
+                    parsed = _parse_time_to_seconds(v)
+                    if parsed is not None:
+                        current_out_s = max(0.0, parsed)
+                elif k == "progress" and step_callback:
+                    if v == "end":
+                        pass_frac = 1.0
+                    elif duration > 0:
+                        pass_frac = min(1.0, max(0.0, current_out_s / duration))
+                    else:
+                        pass_frac = 0.0
+
+                    if total_passes == 2:
+                        if pass_index == 1:
+                            overall_p = 0.5 * pass_frac
+                        else:
+                            overall_p = 0.5 + 0.5 * pass_frac
+                    else:
+                        overall_p = pass_frac
+
+                    diff = orig_bytes - target_bytes
+                    if diff > 0:
+                        cand_bytes = int(orig_bytes - diff * overall_p)
+                    else:
+                        cand_bytes = target_bytes
+                    cand_bytes = max(1, cand_bytes)
+
+                    step_callback(overall_p, cand_bytes)
+
+
+        stderr_out = proc.stderr.read() if proc.stderr else ""
+        proc.wait()
+
+        if cancel_check and cancel_check():
+            raise CancellationError("Video compression cancelled")
+
+        if proc.returncode in (-9, -15):
+            raise CancellationError("Video compression cancelled (killed)")
+
+        if proc.returncode != 0:
+            err = stderr_out.strip() or f"exit code {proc.returncode}"
+            raise RuntimeError(f"ffmpeg failed: {err}")
+
+    finally:
+        if on_process_started:
+            on_process_started(None)
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            proc.wait()
 
 
 def _run_ffmpeg_two_pass(
@@ -48,9 +167,12 @@ def _run_ffmpeg_two_pass(
     audio_bitrate: int | None,
     target_res: tuple[int, int] | None,
     source_res: tuple[int, int] | None,
+    duration: float = 0.0,
+    orig_bytes: int = 0,
+    target_bytes: int = 0,
     step_callback: Callable[[float, int], None] | None = None,
-    step_num: int = 1,
-    total_steps: int = 2,
+    cancel_check: Callable[[], bool] | None = None,
+    on_process_started: Callable[[subprocess.Popen | None], None] | None = None,
 ) -> None:
     """Execute two-pass ffmpeg encoding with strict pass-log cleanup.
 
@@ -71,6 +193,10 @@ def _run_ffmpeg_two_pass(
         vf_args: list[str] = []
         if target_res and source_res and target_res != source_res:
             vf_args = ["-vf", f"scale={target_res[0]}:{target_res[1]}"]
+
+        # Initial progress emit
+        if step_callback and orig_bytes > 0:
+            step_callback(0.01, orig_bytes)
 
         # -----------------
         # PASS 1
@@ -97,19 +223,17 @@ def _run_ffmpeg_two_pass(
             "/dev/null",
         ]
 
-        if step_callback:
-            step_callback(0.25, 0)
-
-        proc1 = subprocess.run(
-            pass1_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
+        _stream_ffmpeg(
+            cmd=pass1_cmd,
+            duration=duration,
+            orig_bytes=orig_bytes,
+            target_bytes=target_bytes,
+            pass_index=1,
+            total_passes=2,
+            step_callback=step_callback,
+            cancel_check=cancel_check,
+            on_process_started=on_process_started,
         )
-        if proc1.returncode != 0:
-            err = proc1.stderr.strip() or f"exit code {proc1.returncode}"
-            raise RuntimeError(f"ffmpeg pass 1 failed: {err}")
 
         # -----------------
         # PASS 2
@@ -143,23 +267,22 @@ def _run_ffmpeg_two_pass(
 
         pass2_cmd.append(str(temp_out_path))
 
-        if step_callback:
-            step_callback(0.75, 0)
-
-        proc2 = subprocess.run(
-            pass2_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
+        _stream_ffmpeg(
+            cmd=pass2_cmd,
+            duration=duration,
+            orig_bytes=orig_bytes,
+            target_bytes=target_bytes,
+            pass_index=2,
+            total_passes=2,
+            step_callback=step_callback,
+            cancel_check=cancel_check,
+            on_process_started=on_process_started,
         )
-        if proc2.returncode != 0:
-            err = proc2.stderr.strip() or f"exit code {proc2.returncode}"
-            raise RuntimeError(f"ffmpeg pass 2 failed: {err}")
 
     finally:
         # Guarantee 100% cleanup of pass-log files and temporary directory
         shutil.rmtree(pass_log_dir, ignore_errors=True)
+
 
 
 def shrink_video(
@@ -342,6 +465,8 @@ def shrink_video(
     current_video_bitrate = video_bitrate
     attempt = 0
     smallest_achieved: int | None = None
+    cancel_check = opts.get("cancel_check")
+    on_process_started = opts.get("on_process_started")
 
     try:
         while attempt <= MAX_RETRIES:
@@ -356,7 +481,12 @@ def shrink_video(
                 audio_bitrate=audio_bitrate,
                 target_res=target_res,
                 source_res=source_res,
+                duration=media_info.duration,
+                orig_bytes=orig_bytes,
+                target_bytes=target_bytes,
                 step_callback=step_callback,
+                cancel_check=cancel_check,
+                on_process_started=on_process_started,
             )
 
             if not temp_out_path.exists():
@@ -412,6 +542,14 @@ def shrink_video(
             ),
         )
 
+    except CancellationError:
+        if temp_out_path.exists():
+            temp_out_path.unlink(missing_ok=True)
+        return Result(
+            ok=False,
+            original_bytes=orig_bytes,
+            error="Video compression cancelled",
+        )
     except (RuntimeError, OSError, ValueError) as exc:
         if temp_out_path.exists():
             temp_out_path.unlink(missing_ok=True)
@@ -420,3 +558,4 @@ def shrink_video(
             original_bytes=orig_bytes,
             error=f"Video compression failed: {exc}",
         )
+

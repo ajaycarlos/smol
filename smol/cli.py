@@ -647,7 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--version",
         action="version",
-        version="smol 0.7.0",
+        version="smol 0.8.0",
     )
 
     # Default: show help if no subcommand given
@@ -658,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if argv[0] == "--version":
-        print("smol 0.7.0")
+        print("smol 0.8.0")
         return 0
 
     # Handle subcommands

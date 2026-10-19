@@ -234,3 +234,74 @@ def test_verify_3min_tone_shrinks_and_plays(tmp_path: Path) -> None:
     assert res.final_bytes >= int(target * 0.85)
 
     _verify_audio_playback(res.output_path)
+
+
+def test_shrink_audio_progress_events(tmp_path: Path) -> None:
+    """Verify shrink_audio streams ffmpeg -progress pipe:1 and emits events."""
+    src = tmp_path / "progress_tone.mp3"
+    _generate_tone(src, duration=8.0, bitrate_kbps=192)
+    orig_bytes = src.stat().st_size
+    target_bytes = 60_000
+
+    events: list[tuple[float, int]] = []
+
+    def on_step(progress: float, current_bytes: int) -> None:
+        events.append((progress, current_bytes))
+
+    res = shrink_audio(
+        src,
+        target_bytes=target_bytes,
+        options={"step_callback": on_step},
+    )
+    assert res.ok is True
+    assert len(events) >= 1
+    fractions = [p for p, _ in events]
+    assert all(0.0 <= p <= 1.0 for p in fractions)
+    cand_bytes_list = [b for _, b in events]
+    assert all(b > 0 for b in cand_bytes_list)
+    assert cand_bytes_list[0] <= orig_bytes
+
+
+def test_shrink_audio_cancellation(tmp_path: Path) -> None:
+    """Verify cancelling audio compression terminates ffmpeg and deletes output."""
+    src = tmp_path / "cancel_tone.mp3"
+
+    _generate_tone(src, duration=15.0, bitrate_kbps=256)
+    target_bytes = 50_000
+
+    started_procs: list[subprocess.Popen] = []
+    is_cancelled = False
+
+    def on_started(proc):
+        if proc:
+            started_procs.append(proc)
+
+    def cancel_check() -> bool:
+        return is_cancelled
+
+    def on_step(progress: float, current_bytes: int) -> None:
+        nonlocal is_cancelled
+        if not is_cancelled:
+            is_cancelled = True
+            for p in started_procs:
+                if p.poll() is None:
+                    p.kill()
+
+    res = shrink_audio(
+        src,
+        target_bytes=target_bytes,
+        options={
+            "step_callback": on_step,
+            "cancel_check": cancel_check,
+            "on_process_started": on_started,
+        },
+    )
+
+    assert not res.ok
+    assert "cancel" in res.error.lower()
+    for p in started_procs:
+        assert p.poll() is not None
+
+    partial_files = list(tmp_path.glob("cancel_tone*.mp3"))
+    assert partial_files == [src]
+

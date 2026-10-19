@@ -6,6 +6,8 @@ blocking the Qt event loop, emitting progress updates and completion signals.
 
 from __future__ import annotations
 
+import subprocess
+import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,7 +24,10 @@ Image.init()
 
 
 class ShrinkWorker(QThread):
-    """QThread worker executing image and PDF compression off the UI thread."""
+    """QThread worker executing image, PDF, video, and audio compression
+    off the UI thread.
+    """
+
 
     # progress(current_1_based, total_files, status_or_filename)
     progress = Signal(int, int, str)
@@ -53,10 +58,28 @@ class ShrinkWorker(QThread):
         )
         self.step_pace_s = float(self.options.get("step_pace_s", step_pace_s))
         self._is_cancelled = False
+        self._active_proc: subprocess.Popen | None = None
+        self._proc_lock = threading.Lock()
 
     def cancel(self) -> None:
-        """Request cooperative cancellation."""
+        """Request cooperative cancellation and kill active ffmpeg subprocess."""
         self._is_cancelled = True
+        with self._proc_lock:
+            if self._active_proc is not None:
+                try:
+                    self._active_proc.kill()
+                except OSError:
+                    pass
+
+    def _set_active_proc(self, proc: subprocess.Popen | None) -> None:
+        """Register active child process or kill immediately if already cancelled."""
+        with self._proc_lock:
+            self._active_proc = proc
+            if self._is_cancelled and proc is not None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
 
     def run(self) -> None:
         """Process files in background thread."""
@@ -68,32 +91,6 @@ class ShrinkWorker(QThread):
                 break
 
             self.progress.emit(idx, total, src_path.name)
-            ext = src_path.suffix.lower()
-
-            # Stub progress for video formats (M8 engine)
-            if ext in (".mp4", ".mov", ".mkv", ".webm", ".avi"):
-                orig_bytes = src_path.stat().st_size if src_path.exists() else 0
-                stub_steps = [0.25, 0.50, 0.75, 1.0]
-                for frac in stub_steps:
-                    if self._is_cancelled:
-                        break
-                    diff = orig_bytes - min(orig_bytes, self.target_bytes)
-                    cand_bytes = int(orig_bytes - diff * frac)
-                    self.step_progress.emit(frac, max(1, cand_bytes))
-                    if self.pace_steps:
-                        time.sleep(self.step_pace_s)
-
-                res = Result(
-                    ok=False,
-                    original_bytes=orig_bytes,
-                    error=(
-                        "Video compression engine coming in future milestone (M8); "
-                        "skipped."
-                    ),
-                )
-                results.append((src_path, res))
-                self.result_ready.emit(src_path, res)
-                continue
 
             def on_step(frac: float, cur_bytes: int) -> None:
                 if self._is_cancelled:
@@ -104,6 +101,8 @@ class ShrinkWorker(QThread):
 
             opts = dict(self.options)
             opts["step_callback"] = on_step
+            opts["cancel_check"] = lambda: self._is_cancelled
+            opts["on_process_started"] = self._set_active_proc
 
             try:
                 res = shrink_file(
@@ -118,8 +117,22 @@ class ShrinkWorker(QThread):
                     error=f"Unexpected error: {exc}",
                 )
 
+            if self._is_cancelled:
+                # Clean up any partial output file if cancelled
+                if (
+                    res.output_path
+                    and res.output_path != src_path
+                    and res.output_path.exists()
+                ):
+                    try:
+                        res.output_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                break
+
             results.append((src_path, res))
             self.result_ready.emit(src_path, res)
 
         if not self._is_cancelled:
             self.results_ready.emit(results)
+

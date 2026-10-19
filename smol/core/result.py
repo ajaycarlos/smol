@@ -2,6 +2,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+class CancellationError(Exception):
+    """Raised when an ongoing compression job is cancelled by the user."""
+
+
 @dataclass
 class Result:
     """Core outcome object for file shrinking operations.

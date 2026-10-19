@@ -258,3 +258,42 @@ def test_shrink_mixed_batch_images_and_pdf(
     assert len(data) == 2
     assert all(item["ok"] is True for item in data)
 
+
+def test_shrink_cli_video(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`smol shrink clip.mp4 --max 350KB` successfully shrinks a video file."""
+    from tests.core.test_video import _generate_synthetic_video
+
+    src = tmp_path / "clip.mp4"
+    _generate_synthetic_video(src, duration=3.0, width=640, height=360)
+
+    code = smol.cli.main(["shrink", str(src), "--max", "350KB"])
+    assert code == 0
+
+    captured = capsys.readouterr()
+    assert "clip.mp4" in captured.out
+    assert "→" in captured.out
+
+    out_files = list(tmp_path.glob("clip_350KB*.mp4"))
+    assert len(out_files) == 1
+    assert out_files[0].stat().st_size <= 350_000
+
+
+def test_shrink_cli_audio(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """`smol shrink tone.mp3 --max 60KB` successfully shrinks an audio file."""
+    from tests.core.test_audio import _generate_tone
+
+    src = tmp_path / "tone.mp3"
+    _generate_tone(src, duration=8.0, bitrate_kbps=192)
+
+    code = smol.cli.main(["shrink", str(src), "--max", "60KB"])
+    assert code == 0
+
+    captured = capsys.readouterr()
+    assert "tone.mp3" in captured.out
+    assert "→" in captured.out
+
+    out_files = list(tmp_path.glob("tone_60KB*.mp3"))
+    assert len(out_files) == 1
+    assert out_files[0].stat().st_size <= 60_000
+
+
