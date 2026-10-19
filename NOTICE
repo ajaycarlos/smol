@@ -1,0 +1,14 @@
+# NOTICE
+
+This project incorporates dependencies and references to third-party open-source components.
+
+## python-xlib
+- Project: python-xlib (https://github.com/python-xlib/python-xlib)
+- Version: >= 0.33
+- License: GNU Lesser General Public License v2.1 or later (LGPL-2.1-or-later)
+- Purpose: Pure-Python client protocol implementation of the X11 protocol used on Linux X11 sessions for global key monitoring and cursor pointer query tracking without elevated privileges.
+
+## Filee (Inspiration & Reference)
+- Project: Filee (https://github.com/...)
+- License: MIT License
+- Purpose: Desktop drag-and-drop radial menu workflow inspiration.

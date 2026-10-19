@@ -182,6 +182,8 @@ class DonutWindow(QWidget):
     shrink_progress = Signal(int, int, str)
     shrink_finished = Signal(list)
     shrink_failed = Signal(str, object)
+    drop_received = Signal(list)
+    dismissed = Signal(str)
 
     def __init__(
         self,
@@ -371,6 +373,59 @@ class DonutWindow(QWidget):
             h = self.height()
             self.move(cursor_pos.x() - (w // 2), cursor_pos.y() - (h // 2))
 
+    def center_at(self, x: int, y: int) -> None:
+        """Position overlay centered on the given coordinates with screen clamping."""
+        screen = QApplication.screenAt(QPoint(x, y)) or QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            if geo.height() <= 720 and self.overlay_size == 380:
+                self.adapt_compact_size(340, 68.0, 156.0)
+
+            w = self.width()
+            h = self.height()
+            target_x = x - (w // 2)
+            target_y = y - (h // 2)
+
+            margin = 8
+            target_x = max(geo.left() + margin, min(target_x, geo.right() - w - margin))
+            target_y = max(geo.top() + margin, min(target_y, geo.bottom() - h - margin))
+            self.move(target_x, target_y)
+        else:
+            w = self.width()
+            h = self.height()
+            self.move(x - (w // 2), y - (h // 2))
+
+    def center_on_screen(self) -> None:
+        """Position overlay centered on the screen (Path C)."""
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            if geo.height() <= 720 and self.overlay_size == 380:
+                self.adapt_compact_size(340, 68.0, 156.0)
+            w = self.width()
+            h = self.height()
+            self.move(geo.center().x() - (w // 2), geo.center().y() - (h // 2))
+
+    def reset_state(self) -> None:
+        """Reset overlay to fresh idle state ready for a new summon or drop."""
+        if self._shrink_worker is not None and self._shrink_worker.isRunning():
+            self._shrink_worker.cancel()
+            self._shrink_worker.wait(200)
+            self._shrink_worker = None
+        self.state = "idle"
+        self.center_status_text = ""
+        self.result_message = None
+        self.last_results = None
+        self.failure_error = None
+        self.retry_target_bytes = None
+        self._retry_rect = None
+        self._hovered_idx = None
+        self._current_prediction = None
+        self.file_paths = []
+        self._init_file_data()
+        self._init_segments()
+        self.update()
+
     def run_overlay(self) -> int:
         """Center on cursor, capture backdrop, show window, and execute event loop."""
         self.center_on_cursor()
@@ -386,6 +441,7 @@ class DonutWindow(QWidget):
         if event.key() == Qt.Key.Key_Escape:
             if self._custom_dialog is not None and self._custom_dialog.isVisible():
                 self._custom_dialog.close()
+            self.dismissed.emit("esc")
             self.close()
             event.accept()
         else:
@@ -570,6 +626,7 @@ class DonutWindow(QWidget):
 
         if idx is not None:
             item = self.segments[idx]
+            self.drop_received.emit(dropped_files)
             if item.target_bytes is not None:
                 event.acceptProposedAction()
                 self.file_paths = dropped_files
@@ -759,6 +816,7 @@ class DonutWindow(QWidget):
                 event.accept()
                 return
             if r > self.geometry_calc.outer_radius:
+                self.dismissed.emit("outside")
                 self.close()
                 event.accept()
                 return
@@ -778,6 +836,7 @@ class DonutWindow(QWidget):
 
         if self.state == "success":
             if r > self.geometry_calc.outer_radius:
+                self.dismissed.emit("outside")
                 self.close()
                 event.accept()
                 return
@@ -799,6 +858,7 @@ class DonutWindow(QWidget):
         idx = self.geometry_calc.segment_at(dx, dy)
         if idx is None:
             if r > self.geometry_calc.outer_radius:
+                self.dismissed.emit("outside")
                 self.close()
                 event.accept()
                 return

@@ -172,17 +172,21 @@ M4 — Hold-key daemon service & summoning integration (In progress).
     5. Compact display (800×600) adaptation & boundary clamping: added `adapt_compact_size()` scaling to 340×340 on screens <=720px height with 8px boundary margins, maintaining comfortable touch/click hit targets without dominating small screens.
   - Added regression test suite in `tests/ui/test_donut_window.py` covering compact scaling, screen clamping, and visual state rendering.
   - VERIFY: Screenshots show visible improvement across all 5 states on both light and dark wallpapers; all 229 tests pass; `uv run ruff check .` clean. Tagged `v0.3.0`.
-- Implement smol daemon lifecycle management (`smol daemon start|stop|status|run`):
-  - Created `smol.daemon.service` with single-instance lock file (`fcntl.flock`), PID file tracking in `~/.local/state/smol/daemon.pid`, and automatic detection/cleanup of stale PID files.
-  - Configured rotating logging to `~/.local/state/smol/daemon.log` using `RotatingFileHandler` (1 MB max, 3 backups) logging startup details (PID, trigger key, sizes), signals, and shutdowns.
-  - Handled clean shutdown on SIGTERM and SIGINT with lock release and state cleanup.
-  - Extended `smol.core.config` with `get_daemon_config()` loading `trigger_key` (default `"Super"`) and `sizes` (default 20 KB to 2 MB) with fallback defaults if missing, plus support for `SMOL_CONFIG_PATH` and `SMOL_STATE_DIR`.
-  - Added `daemon` subcommand to `smol/cli.py` supporting `start`, `stop`, `status`, and foreground `run`.
-  - Added test suite in `tests/test_daemon.py` (7 tests) covering single instance lock contention, status detection, background start/stop lifecycle, clean SIGTERM shutdown, logging rotation, and CLI argument handling.
-  - VERIFY: `smol daemon start` twice reports already running; `status` and `stop` operate cleanly; all 236 tests pass; `uv run ruff check .` clean.
+- Implement hold-key and drag monitoring integration into daemon (Milestone M4: Path A X11 full Filee-like + Path C fallback):
+  - Created `smol.daemon.listener` with `KeyHoldTracker` (tracking `Super`, `Ctrl+Alt`, `Right Alt`, `Right Ctrl`), `DragTracker` (detecting button1 drag initiation with distance threshold >= 6px), and `ListenerCoordinator` coordinating summoning, drop retention, and dismissal.
+  - Implemented `X11EventListener(QThread)` with `python-xlib` querying `d.query_keymap()` and `root.query_pointer()` only while trigger key is held, achieving ~1% idle CPU.
+  - Fail-safe ungrab guarantee (`ensure_ungrab`) releasing X11 keyboard and pointer grabs on SIGTERM, SIGINT, `atexit`, and in finally blocks so system input is never locked on crash.
+  - Extended `DonutWindow` with `center_at(x, y)` with boundary clamping, `center_on_screen()` (for Path C), `reset_state()`, and `drop_received` / `dismissed` signals.
+  - Integrated full Qt event loop into `DaemonService.run()` with clean signal handling and structured logging of every state transition to `~/.local/state/smol/daemon.log`.
+  - Added test suites in `tests/daemon/test_listener.py` and `tests/daemon/test_daemon_summon.py` (14 new tests, 250 total).
+  - Recorded `python-xlib` dependency and licensing (LGPL-2.1-or-later) in `NOTICE` and `pyproject.toml`.
+  - VERIFY: `smol daemon start/status/stop` runs cleanly; idle CPU ~1%; `uv run pytest` (250 passed); `uv run ruff check .` clean.
+
+## Current milestone
+M4 complete. Next: M5 — Animation and polish.
 
 ## Next
-- Milestone M4: Hold-key and drag monitoring integration into daemon (X11 python-xlib key hold detection and XQueryPointer cursor overlay summoning).
+- Milestone M5: Animation spec implementation (smooth open/hover/drop/progress animations, toast with Open folder / Undo / Copy path).
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).

@@ -19,7 +19,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+
 from smol.core.config import get_config_path, get_daemon_config
+from smol.daemon.listener import (
+    ListenerCoordinator,
+    X11EventListener,
+    detect_session_type,
+    ensure_ungrab,
+    resolve_summon_mode,
+)
+from smol.ui.donut_window import DonutWindow
 
 
 def get_state_dir(override_dir: Path | str | None = None) -> Path:
@@ -183,26 +194,137 @@ class DaemonService:
 
         self._stop_event.clear()
 
+        listener: X11EventListener | None = None
+        donut: DonutWindow | None = None
+
         def handle_signal(signum: int, frame: Any) -> None:
             logger.info("Received signal %s; shutting down...", signum)
             self._stop_event.set()
+            ensure_ungrab()
+            if listener is not None:
+                listener.stop()
+            app_inst = QApplication.instance()
+            if app_inst is not None:
+                app_inst.quit()
 
         signal.signal(signal.SIGTERM, handle_signal)
         signal.signal(signal.SIGINT, handle_signal)
 
-        config = get_daemon_config(self.config_path)
-        logger.info(
-            "smol daemon started (pid %d, trigger_key=%s, sizes=%s)",
-            os.getpid(),
-            config.get("trigger_key"),
-            config.get("sizes"),
-        )
-
         try:
-            while not self._stop_event.is_set():
-                self._stop_event.wait(timeout=0.5)
+            # Fallback to offscreen platform if no display server is present
+            if (
+                "DISPLAY" not in os.environ
+                and "WAYLAND_DISPLAY" not in os.environ
+                and "QT_QPA_PLATFORM" not in os.environ
+            ):
+                os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication([sys.argv[0]])
+
+            config = get_daemon_config(self.config_path)
+            session_type = detect_session_type()
+            summon_mode = resolve_summon_mode(config.get("path"), session_type)
+            trigger_key = config.get("trigger_key", "Super")
+
+            logger.info(
+                "smol daemon started (pid %d, trigger_key=%s, mode=%s, "
+                "session=%s, sizes=%s)",
+                os.getpid(),
+                trigger_key,
+                summon_mode.value,
+                session_type,
+                config.get("sizes"),
+            )
+
+            donut = DonutWindow(files=[], config_path=self.config_path)
+
+            def on_summon(x: int | None, y: int | None) -> None:
+                donut.reset_state()
+                if x is not None and y is not None:
+                    donut.center_at(x, y)
+                else:
+                    donut.center_on_screen()
+                donut.capture_desktop_background()
+                donut.show()
+                logger.info(
+                    "Donut overlay summoned at x=%s, y=%s (mode=%s)",
+                    x,
+                    y,
+                    summon_mode.value,
+                )
+
+            def on_dismiss(reason: str) -> None:
+                donut.hide()
+                donut.reset_state()
+                logger.info("Donut overlay dismissed (reason=%s)", reason)
+
+            coordinator = ListenerCoordinator(
+                mode=summon_mode,
+                target_key=trigger_key,
+                on_summon=on_summon,
+                on_dismiss=on_dismiss,
+                on_log=logger.info,
+            )
+
+            def handle_donut_dismissed(reason: str) -> None:
+                if reason == "esc":
+                    coordinator.on_esc_pressed()
+                else:
+                    coordinator.on_click_outside()
+
+            donut.drop_received.connect(coordinator.on_drop_received)
+            donut.dismissed.connect(handle_donut_dismissed)
+            donut.shrink_started.connect(
+                lambda target: logger.info(
+                    "Shrink job started for '%s' (target=%s bytes)",
+                    donut.file_name,
+                    target,
+                )
+            )
+            donut.shrink_finished.connect(
+                lambda results: logger.info(
+                    "Shrink job finished: %s", donut.result_message
+                )
+            )
+            donut.shrink_failed.connect(
+                lambda err, retry: logger.info(
+                    "Shrink job failed: %s (retry_target=%s)", err, retry
+                )
+            )
+
+            if session_type == "x11":
+                listener = X11EventListener(target_key=trigger_key)
+                listener.key_down.connect(coordinator.on_key_down)
+                listener.key_up.connect(coordinator.on_key_up)
+                listener.drag_started.connect(coordinator.on_drag_start)
+                listener.error_occurred.connect(
+                    lambda err: logger.warning("Listener warning: %s", err)
+                )
+                listener.start()
+            else:
+                logger.info(
+                    "Non-X11 session (%s); running in Path C mode without listener.",
+                    session_type,
+                )
+
+            # Heartbeat timer ensuring Python signal handlers execute during Qt loop
+            heartbeat = QTimer()
+            heartbeat.timeout.connect(lambda: None)
+            heartbeat.start(100)
+
+            if not self._stop_event.is_set():
+                app.exec()
         finally:
+            ensure_ungrab()
+            if listener is not None:
+                listener.stop()
+            if donut is not None:
+                donut.close()
             logger.info("smol daemon stopped.")
+            for handler in logger.handlers:
+                handler.flush()
             self.release_lock()
 
         return 0
