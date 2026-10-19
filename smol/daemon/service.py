@@ -240,6 +240,13 @@ class DaemonService:
 
             donut = DonutWindow(files=[], config_path=self.config_path)
 
+            # Pre-build native window surface and painter caches hidden
+            # so the first user interaction has zero cold-start delay
+            donut.show()
+            app.processEvents()
+            donut.hide()
+            app.processEvents()
+
             def on_summon(x: int | None, y: int | None) -> None:
                 donut.reset_state()
                 if x is not None and y is not None:
@@ -295,7 +302,11 @@ class DaemonService:
             )
 
             if session_type == "x11":
-                listener = X11EventListener(target_key=trigger_key)
+                listener = X11EventListener(
+                    target_key=trigger_key,
+                    poll_interval=0.015,
+                    idle_poll_interval=0.08,
+                )
                 listener.key_down.connect(coordinator.on_key_down)
                 listener.key_up.connect(coordinator.on_key_up)
                 listener.drag_started.connect(coordinator.on_drag_start)
@@ -313,7 +324,7 @@ class DaemonService:
             # Heartbeat timer ensuring Python signal handlers execute during Qt loop
             heartbeat = QTimer()
             heartbeat.timeout.connect(lambda: None)
-            heartbeat.start(100)
+            heartbeat.start(500)
 
             if not self._stop_event.is_set():
                 app.exec()

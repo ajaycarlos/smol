@@ -389,11 +389,13 @@ class X11EventListener(QThread):
         self,
         target_key: str = "Super",
         poll_interval: float = 0.015,
+        idle_poll_interval: float = 0.08,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
         self.target_key = target_key
         self.poll_interval = poll_interval
+        self.idle_poll_interval = idle_poll_interval
         self._stop_requested = False
         self.key_tracker = KeyHoldTracker(target_key=target_key)
         self.drag_tracker = DragTracker()
@@ -452,37 +454,41 @@ class X11EventListener(QThread):
                     keycode_map[code] = name
 
             last_key_state: dict[int, bool] = {kc: False for kc in keycode_map}
+            last_km: list[int] | None = None
 
             while not self._stop_requested:
                 now = time.perf_counter()
 
                 # Query key states
                 km = d.query_keymap()
-                for kc, raw_name in keycode_map.items():
-                    is_down = bool((km[kc // 8] >> (kc % 8)) & 1)
-                    was_down = last_key_state.get(kc, False)
+                if km != last_km:
+                    for kc, raw_name in keycode_map.items():
+                        is_down = bool((km[kc // 8] >> (kc % 8)) & 1)
+                        was_down = last_key_state.get(kc, False)
 
-                    if is_down and not was_down:
-                        last_key_state[kc] = True
-                        for msg in self.key_tracker.on_raw_key_down(
-                            raw_name, timestamp=now
-                        ):
-                            if msg.startswith("PRESS "):
-                                key_pressed = msg[len("PRESS ") :]
-                                self.key_down.emit(key_pressed)
-                    elif not is_down and was_down:
-                        last_key_state[kc] = False
-                        for msg in self.key_tracker.on_raw_key_up(
-                            raw_name, timestamp=now
-                        ):
-                            if msg.startswith("RELEASE "):
-                                parts = msg.split()
-                                key_released = parts[1]
-                                held_ms = 0.0
-                                for p in parts[2:]:
-                                    if p.startswith("held="):
-                                        held_ms = float(p[len("held=") :].rstrip("ms"))
-                                self.key_up.emit(key_released, held_ms)
+                        if is_down and not was_down:
+                            last_key_state[kc] = True
+                            for msg in self.key_tracker.on_raw_key_down(
+                                raw_name, timestamp=now
+                            ):
+                                if msg.startswith("PRESS "):
+                                    key_pressed = msg[len("PRESS ") :]
+                                    self.key_down.emit(key_pressed)
+                        elif not is_down and was_down:
+                            last_key_state[kc] = False
+                            for msg in self.key_tracker.on_raw_key_up(
+                                raw_name, timestamp=now
+                            ):
+                                if msg.startswith("RELEASE "):
+                                    parts = msg.split()
+                                    key_released = parts[1]
+                                    held_ms = 0.0
+                                    for p in parts[2:]:
+                                        if p.startswith("held="):
+                                            val = p[len("held=") :].rstrip("ms")
+                                            held_ms = float(val)
+                                    self.key_up.emit(key_released, held_ms)
+                    last_km = km
 
                 trigger_held = self.key_tracker.is_target_pressed()
                 if trigger_held:
@@ -501,7 +507,7 @@ class X11EventListener(QThread):
                         self.drag_cancelled.emit()
                     time.sleep(self.poll_interval)
                 else:
-                    time.sleep(0.025)
+                    time.sleep(self.idle_poll_interval)
         except Exception as e:  # noqa: BLE001
             self.error_occurred.emit(f"X11 listener exception: {e}")
         finally:

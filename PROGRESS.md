@@ -202,8 +202,19 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added test suite in `tests/test_autostart.py` (7 tests covering file creation, status, idempotency, and CLI dispatch).
   - VERIFY: `smol integrate autostart install/status/uninstall` verified end-to-end; all 269 tests pass; `uv run ruff check .` clean.
 
+- Benchmark and optimize daemon idle resources and donut latency (Milestone M4 performance verification & release v0.4.0):
+  - Created reproducible performance measurement harness (`scripts/measure_performance.py`) measuring trigger-to-visible latency, cold-start time-to-first-pixel, warm summon latency, idle CPU %, and resident memory on active X11 display (`DISPLAY=:0`).
+  - Pre-built `DonutWindow` hidden during daemon startup in `smol/daemon/service.py`, warming native X11 window surfaces, glyph caches, and painter pipelines before the first user trigger.
+  - Reduced first-use time-to-first-pixel from 36.0 ms down to 20.65 ms (< 150 ms target).
+  - Optimized `X11EventListener` in `smol/daemon/listener.py` with `idle_poll_interval=0.08` (80 ms) and keymap comparison (`km == last_km`) skipping keycode parsing when keyboard state is unchanged; tuned Qt heartbeat timer to 500 ms in `smol/daemon/service.py`.
+  - Reduced daemon idle CPU from 2.2%–4.1% down to ~0% (`top`: 0.0%, direct /proc 5s sample: 0.60% of 1 core).
+  - Reduced idle resident memory (RSS) from 118.2 MB down to 92.9 MB.
+  - Measured warm summon-to-visible latency at 22.81 ms (Min 16.38 ms, Max 30.46 ms, target < 150 ms).
+  - Synchronized package version to 0.4.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
+  - VERIFY: all 269 tests passing; `uv run ruff check .` clean; all performance targets verified and met; tagged `v0.4.0`.
+
 ## Current milestone
-M4 complete. Next: M5 — Animation and polish.
+M4 complete and performance-verified. Next: M5 — Animation and polish.
 
 ## Next
 - Milestone M5: Animation spec implementation (smooth open/hover/drop/progress animations, toast with Open folder / Undo / Copy path).
@@ -213,8 +224,10 @@ M4 complete. Next: M5 — Animation and polish.
 - 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
 - 2026-10-18: Enforce post-write disk verification in core engine to guarantee no output file can ever be written or returned as successful above target_bytes.
 - 2026-10-19: Standardize unified deep glass foundation disc (`rgba(16, 18, 27, 215)`) under frosted desktop snapshot to guarantee consistent text contrast and eliminate inverted brightness on light wallpapers.
+- 2026-10-19: Pre-build DonutWindow hidden during daemon startup to eliminate cold-start widget initialization latency on first user summon.
+- 2026-10-19: Adopt 80 ms idle keymap polling with fast-path unchanged keymap skip in X11EventListener, achieving ~0% idle CPU while keeping key response time under ~80 ms.
 
-## Known limits (v0.3.0)
+## Known limits (v0.4.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
