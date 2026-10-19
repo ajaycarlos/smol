@@ -411,8 +411,42 @@ def integrate(argv: list[str]) -> int:
 
 
 
+def _get_demo_photo() -> Path:
+    """Return a path to a sample photo for demo mode, creating one if needed."""
+    # 1. Check repo tests/samples/portrait.jpg
+    repo_sample = (
+        Path(__file__).resolve().parent.parent / "tests" / "samples" / "portrait.jpg"
+    )
+    if repo_sample.exists() and repo_sample.stat().st_size > 0:
+        return repo_sample
+
+    # 2. Check XDG_CACHE_HOME / smol / demo_portrait.jpg
+    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "smol"
+    demo_file = cache_dir / "demo_portrait.jpg"
+    if demo_file.exists() and demo_file.stat().st_size > 0:
+        return demo_file
+
+    # 3. Generate sample image
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    import random
+
+    from PIL import Image, ImageDraw
+
+    random.seed(101)
+    w, h = 1200, 1600
+    grad = Image.new("RGB", (w, h))
+    draw = ImageDraw.Draw(grad)
+    for y in range(0, h, 2):
+        c = int(255 * (y / h))
+        draw.line([(0, y), (w, y)], fill=(c, 255 - c, 128), width=2)
+    noise = Image.frombytes("RGB", (w, h), random.randbytes(w * h * 3))
+    blended = Image.blend(grad, noise, 0.70)
+    blended.save(demo_file, format="JPEG", quality=85)
+    return demo_file
+
+
 def donut(argv: list[str]) -> int:
-    """Handle `smol donut --files FILE...` subcommand."""
+    """Handle `smol donut [--files FILE...] [--demo]` subcommand."""
     parser = argparse.ArgumentParser(
         prog="smol donut",
         description="Open the donut size menu at the cursor",
@@ -420,9 +454,13 @@ def donut(argv: list[str]) -> int:
     parser.add_argument(
         "--files",
         nargs="+",
-        required=True,
         metavar="FILE",
         help="One or more files to shrink",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run donut in demo mode with a sample photo for screen recording",
     )
 
     if "--help" in argv or "-h" in argv:
@@ -434,11 +472,22 @@ def donut(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    paths = [Path(f) for f in args.files]
-    for p in paths:
-        if not p.exists():
-            print(f"Error: File not found: {p}", file=sys.stderr)
-            return 1
+    if not args.files and not args.demo:
+        parser.print_usage(sys.stderr)
+        print(
+            "smol donut: error: one of --files or --demo is required",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.files:
+        paths = [Path(f) for f in args.files]
+        for p in paths:
+            if not p.exists():
+                print(f"Error: File not found: {p}", file=sys.stderr)
+                return 1
+    else:
+        paths = [_get_demo_photo()]
 
     from PySide6.QtWidgets import QApplication
 
@@ -529,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--version",
         action="version",
-        version="smol 0.4.0",
+        version="smol 0.5.0",
     )
 
     # Default: show help if no subcommand given
@@ -540,7 +589,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if argv[0] == "--version":
-        print("smol 0.4.0")
+        print("smol 0.5.0")
         return 0
 
     # Handle subcommands

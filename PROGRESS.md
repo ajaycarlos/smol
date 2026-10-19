@@ -234,9 +234,15 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Failure state: renders amber progress ring around thumbnail, honest engine error explanation, and "Use smallest possible" button that triggers retry at the smallest achievable size.
   - Test suites in `tests/ui/test_toast.py` (8 tests) and `tests/ui/test_completion_sequence.py` (3 tests) plus verification script `scripts/verify_completion_toast.py`.
   - VERIFY: end-to-end verification confirms ring snap, 600 ms burst, toast display, 6s timer pause/resume on hover, copy path, undo output deletion with original file 100% intact, and failure amber ring with "Use smallest possible" retry; all 299 tests pass; ruff clean.
+- Add `smol donut --demo` for 15-second screen recording demo (Milestone M5 release v0.5.0):
+  - Added `--demo` flag to `smol donut` in `smol/cli.py` launching the interactive overlay over a sample photo without requiring `--files`.
+  - Implemented `_get_demo_photo()` resolving `tests/samples/portrait.jpg` or creating a realistic ~1.2 MB portrait JPEG in `~/.cache/smol/` if executed outside development repository.
+  - Added test suite in `tests/test_cli_donut.py` (7 tests) verifying `--demo` invocation, file resolution, and fallback generation.
+  - Synchronized package and CLI versions to 0.5.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
+  - VERIFY: `smol --version` outputs `smol 0.5.0`; `smol donut --help` displays `--demo`; `smol donut` without args exits with code 2 and helpful usage; all 301 tests pass; `uv run ruff check .` clean. Tagged `v0.5.0`.
 
 ## Current milestone
-M5 — Animation and polish (Completed: open, hover, prediction, drop pulse, ring progress, size countdown, checkmark burst, toast, undo, amber failure retry).
+M5 — Animation and polish (Completed: open, hover, prediction, drop pulse, ring progress, size countdown, checkmark burst, toast, undo, amber failure retry, and smol donut --demo).
 
 ## Next
 - M6 — Settings window.
@@ -250,7 +256,7 @@ M5 — Animation and polish (Completed: open, hover, prediction, drop pulse, rin
 - 2026-10-19: Pre-build DonutWindow hidden during daemon startup to eliminate cold-start widget initialization latency on first user summon.
 - 2026-10-19: Adopt 80 ms idle keymap polling with fast-path unchanged keymap skip in X11EventListener, achieving ~0% idle CPU while keeping key response time under ~80 ms.
 
-## Known limits (v0.4.0)
+## Known limits (v0.5.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
