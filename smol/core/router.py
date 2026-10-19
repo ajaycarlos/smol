@@ -15,6 +15,7 @@ from typing import Any
 from smol.core.image import shrink_image
 from smol.core.pdf import shrink_pdf
 from smol.core.result import Result
+from smol.core.video import shrink_video
 
 IMAGE_EXTENSIONS = {
     ".jpg",
@@ -95,11 +96,7 @@ def shrink_file(
     elif kind == "pdf":
         return shrink_pdf(src_path, target_bytes, options=options)
     elif kind == "video":
-        return Result(
-            ok=False,
-            original_bytes=orig_bytes,
-            error="Video compression engine coming in future milestone (M8); skipped.",
-        )
+        return shrink_video(src_path, target_bytes, options=options)
     else:
         ext_str = f"'{src_path.suffix}'" if src_path.suffix else f"'{src_path.name}'"
         return Result(

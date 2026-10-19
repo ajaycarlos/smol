@@ -317,8 +317,12 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Normalized `target_bytes` (supporting int, float, and string representations via `parse_size`).
   - Added "already small enough" bypass when target >= original size returning original file with warning matching image engine semantics.
   - Removed pre-emptive bitrate/audio rejections; only reject early if total bandwidth is below minimum viable threshold (50 kbps total).
-  - Always attempt two-pass encode when total bandwidth >= 50 kbps, dynamically scaling audio down to 24 kbps on tight budgets.
-  - Added 3 unit tests in `tests/core/test_video.py` covering target >= original size, target = 80%, and target = 10% on high-bitrate clips. All 381 tests pass.
+- Route video in engine and Donut UI (`smol/core/router.py`, `smol/ui/donut_window.py`):
+  - Wired `shrink_file` in `smol/core/router.py` to dispatch video files (`.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`) directly to `shrink_video`.
+  - Added instant dry-run prediction support in `shrink_video` for Donut segment hover (`~{size}, {w}×{h}`).
+  - Added fast 1-frame ffmpeg video thumbnail rendering in `smol/ui/donut_window.py` (`_load_thumbnail_pixmap`).
+  - Added video extension awareness to `DonutWindow._first_image_path`.
+  - Verified end-to-end: a 13.3 MB 30s video clip compressed to 8 MB lands at 7.39 MB via both `shrink_file` and CLI `smol shrink`. All 381 tests pass; ruff clean.
 
 ## Current milestone
 M8 — Video and audio engine (In progress).

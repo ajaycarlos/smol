@@ -320,6 +320,20 @@ def shrink_video(
             video_bitrate=video_bitrate,
         )
 
+    # Dry-run prediction for UI hover
+    dry_run = bool(opts.get("dry_run", False))
+    if dry_run:
+        predicted_bytes = min(orig_bytes, int(target_bytes * safety_factor))
+        return Result(
+            ok=True,
+            output_path=None,
+            original_bytes=orig_bytes,
+            final_bytes=predicted_bytes,
+            width=target_res[0] if target_res else None,
+            height=target_res[1] if target_res else None,
+            steps=0,
+        )
+
     # 5. Prepare destination and atomic temp file
     dest_path = output_path(src_path, target_bytes, out_dir=dest_dir, ext=".mp4")
     temp_out_path = dest_path.with_suffix(f".tmp.{os.getpid()}.mp4")

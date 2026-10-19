@@ -176,6 +176,43 @@ def _load_thumbnail_pixmap(path: Path, max_size: int = 70) -> QPixmap | None:
                 pass
         return None
 
+    if path.suffix.lower() in (".mp4", ".mov", ".mkv", ".webm", ".avi"):
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if ffmpeg_bin:
+            try:
+                res = subprocess.run(
+                    [
+                        ffmpeg_bin,
+                        "-ss",
+                        "0.2",
+                        "-i",
+                        str(path),
+                        "-vframes",
+                        "1",
+                        "-f",
+                        "image2pipe",
+                        "-vcodec",
+                        "png",
+                        "-",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    timeout=2.0,
+                )
+                if res.returncode == 0 and res.stdout:
+                    qimg = QImage.fromData(res.stdout)
+                    if not qimg.isNull():
+                        pix = QPixmap.fromImage(qimg)
+                        return pix.scaled(
+                            max_size,
+                            max_size,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        return None
+
     try:
         import pillow_heif
         from PIL import Image, ImageOps
@@ -1182,6 +1219,11 @@ class DonutWindow(QWidget):
                 ".heif",
                 ".avif",
                 ".pdf",
+                ".mp4",
+                ".mov",
+                ".mkv",
+                ".webm",
+                ".avi",
             ):
                 return p
         return self.file_paths[0] if self.file_paths else None
