@@ -12,3 +12,9 @@ This project incorporates dependencies and references to third-party open-source
 - Project: Filee (https://github.com/...)
 - License: MIT License
 - Purpose: Desktop drag-and-drop radial menu workflow inspiration.
+
+## tomli-w
+- Project: tomli-w (https://github.com/hukkin/tomli-w)
+- Version: >= 1.0.0
+- License: MIT License
+- Purpose: Pure-Python library for writing TOML documents used to serialize user configuration files.

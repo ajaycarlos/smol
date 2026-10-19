@@ -12,6 +12,7 @@ dependencies = [
     "pillow-heif>=0.15.0",
     "PySide6-Essentials>=6.6.0",
     "python-xlib>=0.33",
+    "tomli-w>=1.0.0",
 ]
 
 [project.scripts]

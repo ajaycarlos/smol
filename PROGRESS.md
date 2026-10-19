@@ -240,12 +240,19 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added test suite in `tests/test_cli_donut.py` (7 tests) verifying `--demo` invocation, file resolution, and fallback generation.
   - Synchronized package and CLI versions to 0.5.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
   - VERIFY: `smol --version` outputs `smol 0.5.0`; `smol donut --help` displays `--demo`; `smol donut` without args exits with code 2 and helpful usage; all 301 tests pass; `uv run ruff check .` clean. Tagged `v0.5.0`.
+- Implement `smol/config.py` configuration manager with `tomllib` and `tomli-w`:
+  - Added `tomli-w>=1.0.0` (MIT license) dependency for atomic TOML serialization.
+  - Implemented `SmolConfig` dataclass and dictionary-like interface managing `~/.config/smol/config.toml` (honoring `$SMOL_CONFIG_PATH` and `$XDG_CONFIG_HOME`).
+  - Supported schema validation across all required settings: `trigger_key`, `sizes`, `output_mode` (next to original | fixed folder), `output_folder`, `naming_pattern`, `keep_format`, `allow_convert`, `strip_metadata`, `min_side`, `reduce_motion`, `theme`, `autostart`.
+  - Emits user warnings and cleanly falls back to safe defaults on corrupted files, partial files, or invalid field types without crashing.
+  - Added unit test suite in `tests/test_config.py` (8 tests).
+  - VERIFY: all 309 tests pass; `uv run ruff check .` clean.
 
 ## Current milestone
-M5 — Animation and polish (Completed: open, hover, prediction, drop pulse, ring progress, size countdown, checkmark burst, toast, undo, amber failure retry, and smol donut --demo).
+M6 — Settings window (Config foundation complete).
 
 ## Next
-- M6 — Settings window.
+- M6 — Settings UI window.
 
 
 ## Decisions
