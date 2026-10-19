@@ -14,15 +14,15 @@ from typing import Any
 from PIL import Image
 from PySide6.QtCore import QObject, QThread, Signal
 
-from smol.core.image import shrink_image
 from smol.core.result import Result
+from smol.core.router import shrink_file
 
 # Pre-initialize Pillow plugins to prevent import deadlocks in secondary threads
 Image.init()
 
 
 class ShrinkWorker(QThread):
-    """QThread worker executing image compression off the UI thread."""
+    """QThread worker executing image and PDF compression off the UI thread."""
 
     # progress(current_1_based, total_files, status_or_filename)
     progress = Signal(int, int, str)
@@ -70,8 +70,8 @@ class ShrinkWorker(QThread):
             self.progress.emit(idx, total, src_path.name)
             ext = src_path.suffix.lower()
 
-            # Stub progress for PDF and video formats (M7/M8 engines)
-            if ext in (".pdf", ".mp4", ".mov", ".mkv", ".webm", ".avi"):
+            # Stub progress for video formats (M8 engine)
+            if ext in (".mp4", ".mov", ".mkv", ".webm", ".avi"):
                 orig_bytes = src_path.stat().st_size if src_path.exists() else 0
                 stub_steps = [0.25, 0.50, 0.75, 1.0]
                 for frac in stub_steps:
@@ -83,12 +83,11 @@ class ShrinkWorker(QThread):
                     if self.pace_steps:
                         time.sleep(self.step_pace_s)
 
-                kind = "PDF" if ext == ".pdf" else "Video"
                 res = Result(
                     ok=False,
                     original_bytes=orig_bytes,
                     error=(
-                        f"{kind} compression engine coming in future milestone; "
+                        "Video compression engine coming in future milestone (M8); "
                         "skipped."
                     ),
                 )
@@ -107,7 +106,7 @@ class ShrinkWorker(QThread):
             opts["step_callback"] = on_step
 
             try:
-                res = shrink_image(
+                res = shrink_file(
                     src_path,
                     self.target_bytes,
                     options=opts,

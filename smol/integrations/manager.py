@@ -127,7 +127,7 @@ class NemoIntegrator:
                 f"Exec={self.smol_bin} shrink --notify --max {size_arg} -- %F\n"
                 "Icon-Name=image-x-generic\n"
                 "Selection=notnone\n"
-                "Extensions=jpg;jpeg;png;webp;heic;avif;\n"
+                "Extensions=jpg;jpeg;png;webp;heic;avif;pdf;\n"
                 "Quote=double\n"
             )
 
@@ -393,7 +393,7 @@ class DolphinIntegrator:
             "[Desktop Entry]",
             "Type=Service",
             "ServiceTypes=KonqPopupMenu/Plugin",
-            "MimeType=image/jpeg;image/png;image/webp;image/heif;image/avif;",
+            "MimeType=image/jpeg;image/png;image/webp;image/heif;image/avif;application/pdf;",
             f"Actions={';'.join(actions)};",
             "X-KDE-Submenu=Shrink to…",
             "X-KDE-Priority=TopLevel",
@@ -500,13 +500,14 @@ class ThunarIntegrator:
             ).text = f'"{self.smol_bin}" shrink --notify --max {size_arg} -- %F'
             ET.SubElement(
                 action, "description"
-            ).text = f"Shrink image to at most {label}"
+            ).text = f"Shrink file to at most {label}"
             patterns = (
-                "*.jpg;*.jpeg;*.png;*.webp;*.heic;*.avif;"
-                "*.JPG;*.JPEG;*.PNG;*.WEBP;*.HEIC;*.AVIF"
+                "*.jpg;*.jpeg;*.png;*.webp;*.heic;*.avif;*.pdf;"
+                "*.JPG;*.JPEG;*.PNG;*.WEBP;*.HEIC;*.AVIF;*.PDF"
             )
             ET.SubElement(action, "patterns").text = patterns
             ET.SubElement(action, "image-files")
+            ET.SubElement(action, "other-files")
 
         tree.write(self.uca_file, encoding="utf-8", xml_declaration=True)
 

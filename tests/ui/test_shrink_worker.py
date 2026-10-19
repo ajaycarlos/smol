@@ -124,3 +124,43 @@ def test_shrink_worker_honest_failure(qapp, samples_dir: Path, tmp_path: Path):
     assert res.ok is False
     assert res.error is not None
     assert "Smallest I can make this is" in res.error
+
+
+def test_shrink_worker_pdf_success_and_rung_progress(
+    qapp, samples_dir: Path, tmp_path: Path
+):
+    """ShrinkWorker processes PDF files and emits Ghostscript rung step progress."""
+    pdf = tmp_path / "scanned_doc.pdf"
+    shutil.copy(samples_dir / "sample_scanned.pdf", pdf)
+    target_bytes = 500_000
+
+    step_events: list[tuple[float, int]] = []
+    results_received: list[list[tuple[Path, Result]]] = []
+
+    worker = ShrinkWorker(
+        files=[pdf], target_bytes=target_bytes, pace_steps=False
+    )
+    worker.step_progress.connect(
+        lambda frac, cur_bytes: step_events.append((frac, cur_bytes))
+    )
+    worker.results_ready.connect(lambda res: results_received.append(res))
+
+    worker.start()
+    finished = wait_for_signal(worker, timeout_ms=10000)
+    assert finished is True
+
+    assert len(results_received) == 1
+    src, res = results_received[0][0]
+    assert src == pdf
+    assert res.ok is True
+    assert res.final_bytes <= target_bytes
+    assert res.output_path is not None
+    assert res.output_path.exists()
+    assert res.output_path.suffix == ".pdf"
+
+    # Verify that real Ghostscript rung progress was emitted
+    assert len(step_events) >= 1
+    for frac, cand_bytes in step_events:
+        assert 0.0 < frac <= 1.0
+        assert cand_bytes > 0
+

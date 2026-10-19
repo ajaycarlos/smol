@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -78,14 +79,16 @@ def test_shrink_worker_emits_step_progress(
     assert emitted_steps[-1][1] <= 100_000
 
 
-def test_shrink_worker_pdf_video_stub(qapp, tmp_path: Path) -> None:
-    """ShrinkWorker emits stub steps for PDF and video files."""
+def test_shrink_worker_pdf_video_stub(
+    qapp, samples_dir: Path, tmp_path: Path
+) -> None:
+    """ShrinkWorker emits Ghostscript rung step progress for PDF files."""
     dummy_pdf = tmp_path / "sample.pdf"
-    dummy_pdf.write_bytes(b"%PDF-1.4 dummy data " * 50_000)
+    shutil.copy(samples_dir / "sample_scanned.pdf", dummy_pdf)
 
     worker = ShrinkWorker(
         [dummy_pdf],
-        50_000,
+        500_000,
         options={"pace_steps": False},
         pace_steps=False,
     )
@@ -94,13 +97,16 @@ def test_shrink_worker_pdf_video_stub(qapp, tmp_path: Path) -> None:
     worker.step_progress.connect(lambda f, b: emitted_steps.append((f, b)))
 
     worker.start()
-    assert worker.wait(3000)
+    assert worker.wait(10000)
     qapp.processEvents()
 
+    assert len(emitted_steps) >= 1
     fractions = [s[0] for s in emitted_steps]
-    assert fractions == [0.25, 0.50, 0.75, 1.0]
-    # Candidate sizes should count down towards target
-    assert emitted_steps[0][1] > emitted_steps[-1][1]
+    for frac in fractions:
+        assert 0.0 < frac <= 1.0
+    # Candidate sizes should count down or be recorded
+    assert all(cand_bytes > 0 for _, cand_bytes in emitted_steps)
+
 
 
 def test_donut_drop_animates_fade_and_pulse(

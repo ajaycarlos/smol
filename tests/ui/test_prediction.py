@@ -207,3 +207,27 @@ def test_prediction_service_cache_hit_instant(qapp, samples_dir):
     assert (t1 - t0) < 0.05
     assert emitted[0][1] == 100_000
     assert emitted[0][2].ok is True
+
+
+def test_prediction_worker_pdf(qapp, samples_dir):
+    """PredictionWorker produces accurate dry-run predictions for PDF files."""
+    pdf_file = samples_dir / "sample_scanned.pdf"
+    target_bytes = 500_000
+
+    worker = PredictionWorker(1, pdf_file, target_bytes)
+    result_holder = []
+    worker.finished_result.connect(
+        lambda req_id, path, target, pred: result_holder.append(pred)
+    )
+
+    worker.start()
+    timeout_at = time.time() + 10.0
+    while len(result_holder) == 0 and time.time() < timeout_at:
+        wait_events(50)
+
+    assert len(result_holder) == 1
+    pred = result_holder[0]
+    assert pred.ok is True
+    assert pred.final_bytes <= target_bytes
+    assert pred.text.startswith("~")
+

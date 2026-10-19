@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from smol.core.image import shrink_image
+from smol.core.pdf import shrink_pdf
+from smol.core.router import detect_file_type
+from smol.core.router import shrink_file as _core_shrink_file
 from smol.core.size import format_size, parse_size
 from smol.integrations.autostart import AutostartIntegrator
 from smol.integrations.manager import get_integrator
@@ -17,6 +20,22 @@ from smol.integrations.notifier import (
     JobNotifier,
     send_notification,
 )
+
+
+def shrink_file(
+    src: str | Path,
+    target_bytes: int,
+    options: dict[str, Any] | None = None,
+) -> Any:
+    """Route file shrinking to appropriate engine based on file type."""
+    src_path = Path(src)
+    kind = detect_file_type(src_path)
+    if kind == "image":
+        return shrink_image(src_path, target_bytes, options=options)
+    elif kind == "pdf":
+        return shrink_pdf(src_path, target_bytes, options=options)
+    return _core_shrink_file(src_path, target_bytes, options=options)
+
 
 
 def _which(cmd: str) -> bool:
@@ -224,7 +243,7 @@ def shrink(argv: list[str]) -> int:
     with JobNotifier(notify=args.notify) as notifier:
         for f in args.files:
             src_path = Path(f)
-            res = shrink_image(src_path, target_bytes, options=options)
+            res = shrink_file(src_path, target_bytes, options=options)
             results.append((src_path, res))
         notifier.notify_results(results)
 
@@ -628,7 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--version",
         action="version",
-        version="smol 0.6.0",
+        version="smol 0.7.0",
     )
 
     # Default: show help if no subcommand given
@@ -639,7 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if argv[0] == "--version":
-        print("smol 0.6.0")
+        print("smol 0.7.0")
         return 0
 
     # Handle subcommands

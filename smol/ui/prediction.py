@@ -15,8 +15,8 @@ from pathlib import Path
 from PIL import Image
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
 
-from smol.core.image import shrink_image
 from smol.core.result import Result
+from smol.core.router import shrink_file
 from smol.core.size import format_size
 
 # Pre-initialize Pillow plugins to avoid dynamic import lock in background threads
@@ -78,7 +78,7 @@ class PredictionWorker(QThread):
         """Run engine dry_run compression in worker thread."""
         self.worker_thread = QThread.currentThread()
         try:
-            res = shrink_image(
+            res = shrink_file(
                 self.file_path, self.target_bytes, options={"dry_run": True}
             )
             text = format_prediction(res)

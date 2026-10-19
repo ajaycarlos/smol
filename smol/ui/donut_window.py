@@ -13,6 +13,8 @@ import contextlib
 import math
 import os
 import re
+import shutil
+import subprocess
 import time
 import urllib.parse
 from collections.abc import Callable, Sequence
@@ -135,8 +137,43 @@ class SegmentItem(QObject):
 
 
 def _load_thumbnail_pixmap(path: Path, max_size: int = 70) -> QPixmap | None:
-    """Load a thumbnail QPixmap from *path*, using Pillow if available."""
+    """Load a thumbnail QPixmap from *path*, using Pillow or gs for PDF."""
     if not path.is_file():
+        return None
+
+    if path.suffix.lower() == ".pdf":
+        gs_bin = shutil.which("gs")
+        if gs_bin:
+            try:
+                res = subprocess.run(
+                    [
+                        gs_bin,
+                        "-dNOPAUSE",
+                        "-dBATCH",
+                        "-dQUIET",
+                        "-sDEVICE=png16m",
+                        "-dFirstPage=1",
+                        "-dLastPage=1",
+                        "-r72",
+                        "-sOutputFile=-",
+                        str(path),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    timeout=2.0,
+                )
+                if res.returncode == 0 and res.stdout:
+                    qimg = QImage.fromData(res.stdout)
+                    if not qimg.isNull():
+                        pix = QPixmap.fromImage(qimg)
+                        return pix.scaled(
+                            max_size,
+                            max_size,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         return None
 
     try:
@@ -1132,7 +1169,7 @@ class DonutWindow(QWidget):
         self.update()
 
     def _first_image_path(self) -> Path | None:
-        """Find the first likely image file in self.file_paths for prediction."""
+        """Find the first likely image or PDF file in self.file_paths for prediction."""
         for p in self.file_paths:
             if not p.is_file():
                 continue
@@ -1144,6 +1181,7 @@ class DonutWindow(QWidget):
                 ".heic",
                 ".heif",
                 ".avif",
+                ".pdf",
             ):
                 return p
         return self.file_paths[0] if self.file_paths else None

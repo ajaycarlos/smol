@@ -283,8 +283,20 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added test suite in `tests/core/test_pdf.py` (9 tests) and verification harness `scripts/verify_pdf_engine.py`.
   - VERIFY: ~4.87 MB scanned PDF goes to 415.33 KB (under 1 MB target) in 2 steps, and `qpdf --check` passes cleanly (exit code 0); text-only PDF fails honestly reporting smallest achievable size; all 336 tests pass; ruff clean.
 
+- Route by file type in the engine: images → image engine, PDFs → pdf engine (Milestone M7 / release v0.7.0):
+  - Created `smol.core.router` (`detect_file_type` and `shrink_file`) routing images to `shrink_image` and PDFs to `shrink_pdf`, and exposed in `smol.core`.
+  - Wired `smol shrink` CLI to dispatch via `shrink_file` with clean human output formatting (`scanned_doc.pdf  4.87 MB → 415.33 KB  (q75)`) and `--json` support.
+  - Wired Donut background worker (`ShrinkWorker`) to execute `shrink_file` and stream Ghostscript ladder rung numbers (`1/6, 2/6, ...`) as real step progress with live size countdown.
+  - Wired hover predictions (`PredictionWorker` in `smol/ui/prediction.py`) to run dry-run predictions on PDFs.
+  - Wired Donut overlay (`smol/ui/donut_window.py`) to recognize PDFs for hover prediction, accept dropped PDF files, and render first-page thumbnails via Ghostscript.
+  - Wired file manager right-click context menus (`smol/integrations/manager.py`): added PDF extensions and MIME types to Nemo (`Extensions=...pdf;`), Dolphin (`application/pdf;`), and Thunar (`*.pdf;*.PDF;` and `<other-files />`).
+  - Added test suites in `tests/core/test_routing.py` (7 tests), `tests/test_cli_shrink.py` (2 tests), `tests/ui/test_shrink_worker.py` (1 test), `tests/ui/test_prediction.py` (1 test), and `tests/test_integrate.py` (1 test).
+  - Created end-to-end verification script `scripts/verify_pdf_routing_flow.py` proving PDF routing, thumbnail generation, ladder rung emissions (16.7% -> 33.3%), 4.87 MB -> 415.33 KB shrink under 500 KB target, clean `qpdf --check`, and Ghostscript rasterization.
+  - Synchronized package and CLI versions to 0.7.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
+  - VERIFY: `scripts/verify_pdf_routing_flow.py` passes with all checks; `uv run smol shrink tests/samples/sample_scanned.pdf --max 1MB` produces 415.33 KB file in 2 steps; all 348 tests pass; `uv run ruff check .` clean. Tagged `v0.7.0`.
+
 ## Current milestone
-M7 — PDF engine (Complete).
+M7 — PDF engine & routing integration (Complete).
 
 ## Next
 - M8 — Video/audio engine (PLAN.md Section 7.3): two-pass x264 downscaling, duration discovery via ffprobe, and audio bitrate floor handling.
@@ -299,10 +311,12 @@ M7 — PDF engine (Complete).
 - 2026-10-19: Adopt 80 ms idle keymap polling with fast-path unchanged keymap skip in X11EventListener, achieving ~0% idle CPU while keeping key response time under ~80 ms.
 - 2026-10-19: Enforce strict configuration hierarchy: CLI flag > config file > default across all engine and CLI subcommands.
 - 2026-10-19: In `smol/core/pdf.py`, use Ghostscript downsampling ladder (DPI 200→60, QFactor 0.40→1.00) + `qpdf --object-streams=generate`, stopping at first matching rung and validating syntax with `qpdf --check`.
+- 2026-10-19: Implement unified file-type router in `smol/core/router.py` streaming Ghostscript ladder rung numbers as progress fractions into Donut progress rings.
 
-## Known limits (v0.6.0)
+## Known limits (v0.7.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
 - Decompression bomb threshold: images exceeding 89.5 million pixels are safely rejected to protect system memory.
 - PDF: Incompressible text-only vector PDFs or PDFs already below downsampling limits report honest failures stating smallest achievable size.
+

@@ -220,3 +220,41 @@ def test_shrink_multiple_files(
 
     assert len(list(tmp_path.glob("portrait_100KB*.jpg"))) == 1
     assert len(list(tmp_path.glob("photo_100KB*.webp"))) == 1
+
+
+def test_shrink_pdf_success(
+    samples_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`smol shrink sample.pdf --max 500KB` successfully shrinks a PDF file."""
+    src = tmp_path / "scanned_doc.pdf"
+    shutil.copy2(samples_dir / "sample_scanned.pdf", src)
+
+    code = smol.cli.main(["shrink", str(src), "--max", "500KB"])
+    assert code == 0
+
+    captured = capsys.readouterr()
+    assert "scanned_doc.pdf" in captured.out
+    assert "→" in captured.out
+
+    out_files = list(tmp_path.glob("scanned_doc_500KB*.pdf"))
+    assert len(out_files) == 1
+    assert out_files[0].stat().st_size <= 500_000
+
+
+def test_shrink_mixed_batch_images_and_pdf(
+    samples_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Batch shrinking handles both images and PDFs in the same run."""
+    img = tmp_path / "portrait.jpg"
+    pdf = tmp_path / "scanned_doc.pdf"
+    shutil.copy2(samples_dir / "portrait.jpg", img)
+    shutil.copy2(samples_dir / "sample_scanned.pdf", pdf)
+
+    code = smol.cli.main(["shrink", str(img), str(pdf), "--max", "500KB", "--json"])
+    assert code == 0
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert len(data) == 2
+    assert all(item["ok"] is True for item in data)
+

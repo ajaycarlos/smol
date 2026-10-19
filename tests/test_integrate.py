@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 from smol.cli import main
 from smol.integrations.manager import (
     INTEGRATION_SIZES,
+    DolphinIntegrator,
     NemoIntegrator,
+    ThunarIntegrator,
 )
 
 
@@ -270,3 +272,33 @@ def test_shrink_notify_batch_and_failure(tmp_path: Path, monkeypatch):
     assert len(fail_calls) >= 1
     # Body must be the honest engine message (File not found)
     assert "not found" in fail_calls[-1][-1].lower()
+
+
+def test_file_manager_integrations_include_pdf(tmp_path: Path):
+    """Nemo, Dolphin, and Thunar action files include PDF support."""
+    # 1. Nemo
+    nemo_actions = tmp_path / "nemo" / "actions"
+    nemo_config = tmp_path / "nemo" / "config"
+    nemo = NemoIntegrator(actions_dir=nemo_actions, config_dir=nemo_config)
+    nemo.install()
+    sample_action = next(iter(nemo_actions.glob("*.nemo_action")))
+    nemo_content = sample_action.read_text(encoding="utf-8")
+    assert "pdf;" in nemo_content
+
+    # 2. Dolphin
+    dolphin_dir = tmp_path / "dolphin"
+    dolphin = DolphinIntegrator(service_menu_dir=dolphin_dir)
+    dolphin.install()
+    dolphin_desktop = dolphin_dir / "smol_shrink.desktop"
+    dolphin_content = dolphin_desktop.read_text(encoding="utf-8")
+    assert "application/pdf;" in dolphin_content
+
+    # 3. Thunar
+    thunar_uca = tmp_path / "thunar" / "uca.xml"
+    thunar = ThunarIntegrator(uca_file=thunar_uca)
+    thunar.install()
+    thunar_content = thunar_uca.read_text(encoding="utf-8")
+    assert "*.pdf;" in thunar_content
+    assert "<other-files" in thunar_content
+
+
