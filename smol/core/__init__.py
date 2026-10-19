@@ -7,6 +7,7 @@ from smol.core.pdf import shrink_pdf
 from smol.core.result import Result
 from smol.core.router import detect_file_type, shrink_file
 from smol.core.size import format_size, parse_size
+from smol.core.video import shrink_video
 
 __all__ = [
     "Result",
@@ -17,5 +18,6 @@ __all__ = [
     "shrink_file",
     "shrink_image",
     "shrink_pdf",
+    "shrink_video",
 ]
 

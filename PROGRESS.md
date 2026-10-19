@@ -303,14 +303,27 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added unit test suite in `tests/core/test_media_math.py` (19 tests) covering standard clips, sub-second clips, huge targets, impossible targets, invalid inputs, resolution stepping, audio floor checks, and real ffprobe execution.
   - VERIFY: `uv run pytest -q tests/core/test_media_math.py` passes (19 passed in 0.36s); full test suite (367 passed); `uv run ruff check .` clean.
 
+- Implement two-pass x264 video compression pipeline (`smol/core/video.py`):
+  - Created `shrink_video(src, target_bytes, options)` using ffmpeg two-pass x264 with list arguments exclusively (never shell strings).
+  - Isolated pass-log temporary files in dedicated temp directory (`smol_passlog_*`), guaranteed 100% cleaned up via finally block on success, failure, or cancellation.
+  - Bitrate retry ladder: if pass 2 output overshoots target, cuts bitrate 5% and retries (up to 3 retries).
+  - Resolution step-down integration via `decide_resolution` and bits-per-pixel ladder (1080→720→480→360).
+  - Atomic destination writes via PID-tagged temp file in target directory, with non-overwriting collision resolution (`-1`, `-2`).
+  - Honest failure reporting when target is impossible (bandwidth cannot accommodate duration/audio/video floors) or when retries are exhausted.
+  - Exported `shrink_video` in `smol.core`.
+  - Added unit and integration tests in `tests/core/test_video.py` (11 tests).
+  - VERIFY: `scripts/verify_video_shrink.py` generated 30s 1080p synthetic clip (~19.3 MB) and shrank to 8 MB target, landing at 7.39 MB (7,391,367 bytes = 92.39% of target) at 1280x720, and complete decode playback check passed with 0 errors; full test suite (378 passed); ruff clean.
+
 ## Current milestone
 M8 — Video and audio engine (In progress).
 
 ## Next
-- Video compression pipeline with two-pass x264, step progress emissions, and bitrate retry ladder.
+- Audio compression pipeline (`shrink_audio`) and routing integration for video and audio in `smol.core.router`.
 
 
 ## Decisions
+- 2026-10-19: In `smol/core/video.py`, isolate ffmpeg pass logs in a dedicated temporary directory (`smol_passlog_*`) deleted in a `finally` block, ensuring no dangling `ffmpeg2pass*` files on disk even during failures or exceptions.
+- 2026-10-19: On video target overshoot, retry up to 3 times cutting video bitrate by 5% on each attempt before honest failure reporting.
 - 2026-10-19: In `smol/core/media_math.py`, keep calculation functions pure (zero ffmpeg calls), using 0.92 safety factor, 64 kbps default audio allocation, 0.06 bits-per-pixel threshold for ladder step-down, and 24 kbps audio floor.
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
 - 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
