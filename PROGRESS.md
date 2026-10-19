@@ -295,14 +295,23 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Synchronized package and CLI versions to 0.7.0 across `pyproject.toml`, `smol/cli.py`, and `tests/test_basic.py`.
   - VERIFY: `scripts/verify_pdf_routing_flow.py` passes with all checks; `uv run smol shrink tests/samples/sample_scanned.pdf --max 1MB` produces 415.33 KB file in 2 steps; all 348 tests pass; `uv run ruff check .` clean. Tagged `v0.7.0`.
 
+- Implement pure media math and ffprobe wrapper (`smol/core/media_math.py`):
+  - Created pure functions for video bitrate calculation with 0.92 safety factor and audio deduction.
+  - Implemented bits-per-pixel resolution ladder step-down (1080→720→480→360) ensuring even dimension pairs and aspect ratio preservation without upscaling.
+  - Implemented audio-only bitrate calculation with 0.92 safety factor and 24 kbps floor enforcement, failing honestly when target is impossible.
+  - Added secure `ffprobe` wrapper (`probe_media`) returning `MediaInfo` (duration, resolution, fps, stream presence) using list arguments.
+  - Added unit test suite in `tests/core/test_media_math.py` (19 tests) covering standard clips, sub-second clips, huge targets, impossible targets, invalid inputs, resolution stepping, audio floor checks, and real ffprobe execution.
+  - VERIFY: `uv run pytest -q tests/core/test_media_math.py` passes (19 passed in 0.36s); full test suite (367 passed); `uv run ruff check .` clean.
+
 ## Current milestone
-M7 — PDF engine & routing integration (Complete).
+M8 — Video and audio engine (In progress).
 
 ## Next
-- M8 — Video/audio engine (PLAN.md Section 7.3): two-pass x264 downscaling, duration discovery via ffprobe, and audio bitrate floor handling.
+- Video compression pipeline with two-pass x264, step progress emissions, and bitrate retry ladder.
 
 
 ## Decisions
+- 2026-10-19: In `smol/core/media_math.py`, keep calculation functions pure (zero ffmpeg calls), using 0.92 safety factor, 64 kbps default audio allocation, 0.06 bits-per-pixel threshold for ladder step-down, and 24 kbps audio floor.
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
 - 2026-10-18: Choose Super (Windows key) as default trigger key with Ctrl+Alt as secondary option; plain Ctrl rejected because Ctrl+drag triggers file copy in Linux file managers.
 - 2026-10-18: Enforce post-write disk verification in core engine to guarantee no output file can ever be written or returned as successful above target_bytes.
