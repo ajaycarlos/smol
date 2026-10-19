@@ -260,6 +260,16 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added test suites in `tests/ui/test_settings_window.py` (7 tests) and `tests/test_cli_settings.py` (2 tests), bringing test suite to 318 passed tests.
   - VERIFY: Changed trigger key (`Ctrl+Alt`) and sizes (`[50 KB, 75 KB, 100 KB, 200 KB]`), saved, restarted daemon, verified new values took effect across daemon startup logs, DonutWindow segments, and CLI commands.
 
+- Make engine, CLI, donut, daemon, and integrations read from smol/config.py (v0.6.0):
+  - Centralized all configuration reading across engine, CLI, donut, daemon, and file-manager integrations to `smol/config.py`, eliminating duplicate hardcoded defaults.
+  - Core engine (`smol/core/image.py` & `smol/core/paths.py`): reads fallback options (`min_dim`, `strip_metadata`, `keep_format`, `allow_convert`, `out_dir`, `naming_pattern`) directly from `smol.config.load_config()`.
+  - CLI (`smol/cli.py`): strictly enforces `CLI flag > config file > default` precedence for `--min-side`, `--keep-metadata`, `--allow-convert`, and `--out-dir`.
+  - Donut UI (`smol/ui/donut_window.py`): dynamically builds segments and motion settings from `smol.config`, removing hardcoded fallback lists, and supports runtime `reload_config()`.
+  - Daemon (`smol/daemon/service.py` & `smol/daemon/listener.py`): monitors config modifications on disk via periodic timer, hot-reloads running DonutWindow segments and listener target key, logs clear notices on change, and reports `[restart needed: config modified]` in `smol daemon status`.
+  - Integrations (`smol/integrations/manager.py`): dynamically generates context menu action files for Nemo, Nautilus, Dolphin, and Thunar from configured sizes.
+  - Added test suites in `tests/test_config_precedence.py` (4 tests), `tests/test_config_subcommands.py` (3 tests), and `tests/daemon/test_daemon_config_reload.py` (2 tests), bringing test suite to 327 tests.
+  - VERIFY: `scripts/verify_config_subcommands.py` verified setting changes propagate across `smol shrink`, `smol integrate`, and `smol daemon`. Tagged `v0.6.0`.
+
 ## Current milestone
 M7 — PDF engine (PLAN.md Section 7.2).
 
@@ -274,8 +284,9 @@ M7 — PDF engine (PLAN.md Section 7.2).
 - 2026-10-19: Standardize unified deep glass foundation disc (`rgba(16, 18, 27, 215)`) under frosted desktop snapshot to guarantee consistent text contrast and eliminate inverted brightness on light wallpapers.
 - 2026-10-19: Pre-build DonutWindow hidden during daemon startup to eliminate cold-start widget initialization latency on first user summon.
 - 2026-10-19: Adopt 80 ms idle keymap polling with fast-path unchanged keymap skip in X11EventListener, achieving ~0% idle CPU while keeping key response time under ~80 ms.
+- 2026-10-19: Enforce strict configuration hierarchy: CLI flag > config file > default across all engine and CLI subcommands.
 
-## Known limits (v0.5.0)
+## Known limits (v0.6.0)
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
 - Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable sub-floor thumbnails or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.

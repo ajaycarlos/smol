@@ -171,8 +171,8 @@ def shrink(argv: list[str]) -> int:
     parser.add_argument(
         "--min-side",
         type=int,
-        default=200,
-        help="Minimum dimension for the short side in pixels (default: 200)",
+        default=None,
+        help="Short-side floor in pixels (default: from config, or 200)",
     )
     parser.add_argument(
         "--notify",
@@ -195,7 +195,7 @@ def shrink(argv: list[str]) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    if args.min_side <= 0:
+    if args.min_side is not None and args.min_side <= 0:
         print("Error: --min-side must be a positive integer", file=sys.stderr)
         return 2
 
@@ -209,7 +209,7 @@ def shrink(argv: list[str]) -> int:
 
     strip_meta = False if args.keep_metadata else cfg.strip_metadata
     allow_conv = True if args.allow_convert else cfg.allow_convert
-    min_dim = args.min_side if args.min_side != 200 else cfg.min_side
+    min_dim = args.min_side if args.min_side is not None else cfg.min_side
 
     options = {
         "strip_metadata": strip_meta,
@@ -217,6 +217,7 @@ def shrink(argv: list[str]) -> int:
         "min_dim": min_dim,
         "dry_run": args.dry_run,
         "out_dir": out_dir,
+        "naming_pattern": cfg.naming_pattern,
     }
 
     results = []
@@ -567,7 +568,10 @@ def daemon(argv: list[str]) -> int:
     if args.action == "status":
         running, pid = service.status()
         if running:
-            print(f"smol daemon is running (PID {pid}).")
+            restart_note = (
+                " [restart needed: config modified]" if service.needs_restart() else ""
+            )
+            print(f"smol daemon is running (PID {pid}){restart_note}.")
             return 0
         else:
             print("smol daemon is not running.")
@@ -624,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--version",
         action="version",
-        version="smol 0.5.0",
+        version="smol 0.6.0",
     )
 
     # Default: show help if no subcommand given
@@ -635,7 +639,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if argv[0] == "--version":
-        print("smol 0.5.0")
+        print("smol 0.6.0")
         return 0
 
     # Handle subcommands

@@ -32,3 +32,14 @@ def isolate_test_config(tmp_path_factory, monkeypatch):
     """Ensure test runs never touch the user's real ~/.config/smol/config.toml."""
     test_config_dir = tmp_path_factory.mktemp("test_config")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(test_config_dir))
+
+
+@pytest.fixture
+def qapp():
+    """Ensure a QApplication instance exists for GUI component tests."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(["smol-test"])
+    yield app

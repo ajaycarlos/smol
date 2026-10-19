@@ -82,15 +82,7 @@ def build_segment_config(
     from smol.config import load_config
 
     cfg = load_config(config_path)
-    sizes = cfg.sizes or [
-        20_000,
-        50_000,
-        100_000,
-        200_000,
-        500_000,
-        1_000_000,
-        2_000_000,
-    ]
+    sizes = cfg.sizes
     base: list[tuple[str, int | None]] = [
         (format_size(sz, spaced=True), sz) for sz in sizes
     ]
@@ -542,6 +534,14 @@ class DonutWindow(QWidget):
         self.outer_radius = outer_radius
         self.setFixedSize(size, size)
         self._init_segments()
+
+    def reload_config(self, config_path: Path | str | None = None) -> None:
+        """Reload configuration from disk and re-initialize segment geometry."""
+        if config_path is not None:
+            self.config_path = config_path
+        self.reduce_motion = get_reduce_motion(self.config_path)
+        self._init_segments()
+        self.update()
 
     def center_on_cursor(self) -> None:
         """Position overlay centered on the current cursor position."""

@@ -79,10 +79,107 @@ class DaemonService:
         self.log_path = get_log_path(self.state_dir)
         self.pid_path = get_pid_path(self.state_dir)
         self.lock_path = get_lock_path(self.state_dir)
+        self.config_mtime_path = self.state_dir / "daemon.config_mtime"
+        self.restart_flag_path = self.state_dir / "daemon.restart_needed"
 
         self._lock_file: Any = None
         self._stop_event = threading.Event()
         self._logger: logging.Logger | None = None
+        self._last_config_mtime: float | None = None
+
+    def _record_config_state(self) -> None:
+        """Record current config.toml mtime to memory and state file."""
+        if self.config_path.is_file():
+            try:
+                mtime = self.config_path.stat().st_mtime
+                self._last_config_mtime = mtime
+                self.config_mtime_path.parent.mkdir(parents=True, exist_ok=True)
+                self.config_mtime_path.write_text(str(mtime), encoding="utf-8")
+            except OSError:
+                pass
+        else:
+            self._last_config_mtime = None
+
+    def is_config_changed(self) -> bool:
+        """Check if config.toml has been modified since last recorded state."""
+        if not self.config_path.is_file():
+            return self._last_config_mtime is not None
+        try:
+            current_mtime = self.config_path.stat().st_mtime
+            if self._last_config_mtime is None:
+                return True
+            return current_mtime != self._last_config_mtime
+        except OSError:
+            return False
+
+    def needs_restart(self) -> bool:
+        """Check if daemon should be restarted due to modified configuration."""
+        if self.restart_flag_path.is_file():
+            return True
+        if not self.config_path.is_file():
+            return False
+        try:
+            current_mtime = self.config_path.stat().st_mtime
+            recorded_mtime = self._last_config_mtime
+            if recorded_mtime is None and self.config_mtime_path.is_file():
+                try:
+                    recorded_mtime = float(
+                        self.config_mtime_path.read_text(encoding="utf-8").strip()
+                    )
+                except (ValueError, OSError):
+                    recorded_mtime = None
+            if recorded_mtime is None:
+                return False
+            return current_mtime > recorded_mtime
+        except OSError:
+            return False
+
+    def check_and_reload_config(
+        self,
+        donut: Any = None,
+        coordinator: Any = None,
+        listener: Any = None,
+    ) -> bool:
+        """Check for config changes, hot-reload active components, and log notices."""
+        if not self.is_config_changed():
+            return False
+
+        logger = self._logger or logging.getLogger("smol.daemon")
+        logger.info("Configuration changed on disk: reloading new settings...")
+
+        from smol.config import load_config
+
+        new_cfg = load_config(self.config_path)
+        self._record_config_state()
+
+        # Update Donut overlay
+        if donut is not None and hasattr(donut, "reload_config"):
+            donut.reload_config(self.config_path)
+
+        # Update Coordinator
+        if coordinator is not None and hasattr(coordinator, "update_target_key"):
+            coordinator.update_target_key(new_cfg.trigger_key)
+
+        # Update X11 listener
+        if listener is not None and hasattr(listener, "update_target_key"):
+            listener.update_target_key(new_cfg.trigger_key)
+
+        try:
+            self.restart_flag_path.parent.mkdir(parents=True, exist_ok=True)
+            self.restart_flag_path.touch()
+        except OSError:
+            pass
+
+        logger.info(
+            "Configuration reloaded: trigger_key=%s, sizes=%s",
+            new_cfg.trigger_key,
+            new_cfg.sizes,
+        )
+        logger.warning(
+            "Configuration changed on disk: restart needed ('smol daemon stop && "
+            "smol daemon start') if trigger key conflicts with active shortcuts."
+        )
+        return True
 
     def setup_logging(self, console: bool = False) -> logging.Logger:
         """Configure rotating log file and optional console logging."""
@@ -142,6 +239,8 @@ class DaemonService:
             try:
                 fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
                 self._lock_file.close()
+                self.config_mtime_path.unlink(missing_ok=True)
+                self.restart_flag_path.unlink(missing_ok=True)
             except OSError:
                 pass
             self._lock_file = None
@@ -223,6 +322,7 @@ class DaemonService:
             if app is None:
                 app = QApplication([sys.argv[0]])
 
+            self._record_config_state()
             config = get_daemon_config(self.config_path)
             session_type = detect_session_type()
             summon_mode = resolve_summon_mode(config.get("path"), session_type)
@@ -325,6 +425,15 @@ class DaemonService:
             heartbeat = QTimer()
             heartbeat.timeout.connect(lambda: None)
             heartbeat.start(500)
+
+            # Config watcher timer checking for file modifications on disk
+            config_watcher = QTimer()
+            config_watcher.timeout.connect(
+                lambda: self.check_and_reload_config(
+                    donut=donut, coordinator=coordinator, listener=listener
+                )
+            )
+            config_watcher.start(1000)
 
             if not self._stop_event.is_set():
                 app.exec()

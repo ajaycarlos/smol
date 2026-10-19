@@ -11,6 +11,7 @@ from typing import Any
 import pillow_heif
 from PIL import ExifTags, Image, ImageCms, ImageOps, UnidentifiedImageError
 
+from smol.config import load_config
 from smol.core.paths import output_path
 from smol.core.result import Result
 from smol.core.size import format_size
@@ -282,15 +283,18 @@ def shrink_image(
         return Result(ok=False, error=f"File not found: {src_path}")
 
     opts = options or {}
+    cfg = load_config(opts.get("config_path"))
     quality_floor = int(opts.get("quality_floor", 60))
     quality_max = int(opts.get("quality_max", 95))
-    min_dim = max(1, int(opts.get("min_dim", 200)))
-    strip_metadata = bool(opts.get("strip_metadata", True))
-    keep_format = bool(opts.get("keep_format", True))
-    allow_convert = bool(opts.get("allow_convert", False))
+    min_dim = max(1, int(opts.get("min_dim", cfg.min_side)))
+    strip_metadata = bool(opts.get("strip_metadata", cfg.strip_metadata))
+    keep_format = bool(opts.get("keep_format", cfg.keep_format))
+    allow_convert = bool(opts.get("allow_convert", cfg.allow_convert))
     force_reencode = bool(opts.get("force_reencode", False) or opts.get("force", False))
     dry_run = bool(opts.get("dry_run", False))
     out_dir = opts.get("out_dir")
+    if out_dir is None and cfg.output_mode == "fixed folder" and cfg.output_folder:
+        out_dir = cfg.output_folder
     step_callback: Callable[[float, int], None] | None = opts.get(
         "step_callback"
     ) or opts.get("progress_callback")
@@ -677,7 +681,14 @@ def shrink_image(
     elif target_format == "PNG" and suffix not in (".png",):
         output_ext = ".png"
 
-    dest_path = output_path(src_path, target_bytes, ext=output_ext, out_dir=out_dir)
+    dest_path = output_path(
+        src_path,
+        target_bytes,
+        ext=output_ext,
+        out_dir=out_dir,
+        pattern=opts.get("naming_pattern", cfg.naming_pattern),
+        config_path=opts.get("config_path"),
+    )
     if dry_run:
         return Result(
             ok=True,

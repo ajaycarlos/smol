@@ -304,6 +304,11 @@ class ListenerCoordinator:
         self.is_donut_visible: bool = False
         self.has_active_drop: bool = False
 
+    def update_target_key(self, target_key: str) -> None:
+        """Update target key dynamically."""
+        self.target_key = target_key
+        self.key_tracker = KeyHoldTracker(target_key=target_key)
+
     def log(self, message: str) -> None:
         if self.on_log is not None:
             self.on_log(message)
@@ -404,6 +409,11 @@ class X11EventListener(QThread):
         self._stop_requested = False
         self.key_tracker = KeyHoldTracker(target_key=target_key)
         self.drag_tracker = DragTracker()
+
+    def update_target_key(self, target_key: str) -> None:
+        """Update target key dynamically."""
+        self.target_key = target_key
+        self.key_tracker = KeyHoldTracker(target_key=target_key)
 
     def stop(self) -> None:
         """Signal thread to stop and wait for completion."""

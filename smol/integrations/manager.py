@@ -1,5 +1,7 @@
 """File manager right-click integration management for smol."""
 
+from __future__ import annotations
+
 import json
 import os
 import shutil
@@ -9,14 +11,33 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from smol.config import DEFAULT_CONFIG, load_config
+from smol.core.size import format_size
+
+
+def get_integration_sizes(
+    config_path: Path | str | None = None,
+) -> list[tuple[str, str, str]]:
+    """Return list of (size_arg, label, slug) generated from configured sizes."""
+    cfg = load_config(config_path)
+    sizes = cfg.sizes
+    res: list[tuple[str, str, str]] = []
+    for sz in sizes:
+        arg = format_size(sz, spaced=False)
+        label = format_size(sz, spaced=True)
+        slug = arg.lower()
+        res.append((arg, label, slug))
+    return res
+
+
+# Backward compatibility default reference based on canonical DEFAULT_CONFIG
 INTEGRATION_SIZES: list[tuple[str, str, str]] = [
-    ("20KB", "20 KB", "20kb"),
-    ("50KB", "50 KB", "50kb"),
-    ("100KB", "100 KB", "100kb"),
-    ("200KB", "200 KB", "200kb"),
-    ("500KB", "500 KB", "500kb"),
-    ("1MB", "1 MB", "1mb"),
-    ("2MB", "2 MB", "2mb"),
+    (
+        format_size(sz, spaced=False),
+        format_size(sz, spaced=True),
+        format_size(sz, spaced=False).lower(),
+    )
+    for sz in DEFAULT_CONFIG["sizes"]
 ]
 
 
@@ -68,6 +89,7 @@ class NemoIntegrator:
         actions_dir: Path | None = None,
         config_dir: Path | None = None,
         smol_bin: str | None = None,
+        config_path: Path | str | None = None,
     ) -> None:
         self.file_manager = "nemo"
         user_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
@@ -77,6 +99,8 @@ class NemoIntegrator:
         self.config_dir = config_dir or (user_config / "nemo")
         self.tree_file = self.config_dir / "actions-tree.json"
         self.smol_bin = smol_bin or find_smol_binary()
+        self.config_path = config_path
+        self.sizes = get_integration_sizes(self.config_path)
 
     def _action_filename(self, slug: str) -> str:
         return f"smol_shrink_{slug}.nemo_action"
@@ -89,7 +113,7 @@ class NemoIntegrator:
         installed_files: list[Path] = []
         action_uuids: list[str] = []
 
-        for size_arg, label, slug in INTEGRATION_SIZES:
+        for size_arg, label, slug in self.sizes:
             filename = self._action_filename(slug)
             action_path = self.actions_dir / filename
             action_uuids.append(filename)
@@ -154,7 +178,7 @@ class NemoIntegrator:
         installed_files.append(self.tree_file)
 
         msg = (
-            f"Installed Nemo right-click integration ({len(INTEGRATION_SIZES)} "
+            f"Installed Nemo right-click integration ({len(self.sizes)} "
             "sizes in 'Shrink to…' submenu)"
         )
         return IntegrationResult(
@@ -168,7 +192,7 @@ class NemoIntegrator:
         removed_files: list[Path] = []
 
         # Remove action files
-        for _, _, slug in INTEGRATION_SIZES:
+        for _, _, slug in self.sizes:
             filename = self._action_filename(slug)
             action_path = self.actions_dir / filename
             if action_path.exists():
@@ -213,7 +237,7 @@ class NemoIntegrator:
         installed_sizes: list[str] = []
         missing_sizes: list[str] = []
 
-        for _, label, slug in INTEGRATION_SIZES:
+        for _, label, slug in self.sizes:
             action_path = self.actions_dir / self._action_filename(slug)
             if action_path.exists():
                 installed_sizes.append(label)
@@ -232,9 +256,7 @@ class NemoIntegrator:
             except (json.JSONDecodeError, OSError):
                 pass
 
-        is_installed = (
-            len(installed_sizes) == len(INTEGRATION_SIZES) and tree_has_submenu
-        )
+        is_installed = len(installed_sizes) == len(self.sizes) and tree_has_submenu
         is_partial = bool(installed_sizes or tree_has_submenu) and not is_installed
 
         if is_installed:
@@ -245,7 +267,7 @@ class NemoIntegrator:
         elif is_partial:
             details = (
                 f"Partially installed ({len(installed_sizes)}/"
-                f"{len(INTEGRATION_SIZES)} actions found)"
+                f"{len(self.sizes)} actions found)"
             )
         else:
             details = f"Not installed in {self.actions_dir}"
@@ -267,18 +289,21 @@ class NautilusIntegrator:
         self,
         scripts_dir: Path | None = None,
         smol_bin: str | None = None,
+        config_path: Path | str | None = None,
     ) -> None:
         self.file_manager = "nautilus"
         user_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
         self.scripts_dir = scripts_dir or (user_data / "nautilus/scripts")
         self.submenu_dir = self.scripts_dir / "Shrink to…"
         self.smol_bin = smol_bin or find_smol_binary()
+        self.config_path = config_path
+        self.sizes = get_integration_sizes(self.config_path)
 
     def install(self) -> IntegrationResult:
         self.submenu_dir.mkdir(parents=True, exist_ok=True)
         installed_files: list[Path] = []
 
-        for size_arg, label, _ in INTEGRATION_SIZES:
+        for size_arg, label, _ in self.sizes:
             script_path = self.submenu_dir / label
             content = (
                 "#!/bin/sh\n"
@@ -313,14 +338,14 @@ class NautilusIntegrator:
         installed_sizes = []
         missing_sizes = []
 
-        for _, label, _ in INTEGRATION_SIZES:
+        for _, label, _ in self.sizes:
             script_path = self.submenu_dir / label
             if script_path.exists() and os.access(script_path, os.X_OK):
                 installed_sizes.append(label)
             else:
                 missing_sizes.append(label)
 
-        is_installed = len(installed_sizes) == len(INTEGRATION_SIZES)
+        is_installed = len(installed_sizes) == len(self.sizes)
         is_partial = bool(installed_sizes) and not is_installed
         details = (
             f"Installed in {self.submenu_dir}"
@@ -345,6 +370,7 @@ class DolphinIntegrator:
         self,
         service_menu_dir: Path | None = None,
         smol_bin: str | None = None,
+        config_path: Path | str | None = None,
     ) -> None:
         self.file_manager = "dolphin"
         user_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
@@ -356,10 +382,12 @@ class DolphinIntegrator:
         )
         self.desktop_file = self.service_menu_dir / "smol_shrink.desktop"
         self.smol_bin = smol_bin or find_smol_binary()
+        self.config_path = config_path
+        self.sizes = get_integration_sizes(self.config_path)
 
     def install(self) -> IntegrationResult:
         self.service_menu_dir.mkdir(parents=True, exist_ok=True)
-        actions = [f"shrink_{slug}" for _, _, slug in INTEGRATION_SIZES]
+        actions = [f"shrink_{slug}" for _, _, slug in self.sizes]
 
         lines = [
             "[Desktop Entry]",
@@ -372,7 +400,7 @@ class DolphinIntegrator:
             "",
         ]
 
-        for size_arg, label, slug in INTEGRATION_SIZES:
+        for size_arg, label, slug in self.sizes:
             lines.extend(
                 [
                     f"[Desktop Action shrink_{slug}]",
@@ -406,12 +434,8 @@ class DolphinIntegrator:
 
     def status(self) -> IntegrationStatus:
         is_installed = self.desktop_file.exists()
-        installed_sizes = (
-            [label for _, label, _ in INTEGRATION_SIZES] if is_installed else []
-        )
-        missing_sizes = (
-            [] if is_installed else [label for _, label, _ in INTEGRATION_SIZES]
-        )
+        installed_sizes = [label for _, label, _ in self.sizes] if is_installed else []
+        missing_sizes = [] if is_installed else [label for _, label, _ in self.sizes]
 
         return IntegrationStatus(
             file_manager=self.file_manager,
@@ -432,11 +456,14 @@ class ThunarIntegrator:
         self,
         uca_file: Path | None = None,
         smol_bin: str | None = None,
+        config_path: Path | str | None = None,
     ) -> None:
         self.file_manager = "thunar"
         user_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
         self.uca_file = uca_file or (user_config / "Thunar/uca.xml")
         self.smol_bin = smol_bin or find_smol_binary()
+        self.config_path = config_path
+        self.sizes = get_integration_sizes(self.config_path)
 
     def install(self) -> IntegrationResult:
         self.uca_file.parent.mkdir(parents=True, exist_ok=True)
@@ -462,7 +489,7 @@ class ThunarIntegrator:
                 root.remove(action)
 
         # Add actions for each size
-        for size_arg, label, slug in INTEGRATION_SIZES:
+        for size_arg, label, slug in self.sizes:
             action = ET.SubElement(root, "action")
             ET.SubElement(action, "icon").text = "image-x-generic"
             ET.SubElement(action, "name").text = label
@@ -530,17 +557,17 @@ class ThunarIntegrator:
                     for action in root.findall("action")
                     if action.find("unique-id") is not None
                 }
-                for _, label, slug in INTEGRATION_SIZES:
+                for _, label, slug in self.sizes:
                     if f"smol-{slug}" in action_ids:
                         installed_sizes.append(label)
                     else:
                         missing_sizes.append(label)
             except (ET.ParseError, OSError):
-                missing_sizes = [label for _, label, _ in INTEGRATION_SIZES]
+                missing_sizes = [label for _, label, _ in self.sizes]
         else:
-            missing_sizes = [label for _, label, _ in INTEGRATION_SIZES]
+            missing_sizes = [label for _, label, _ in self.sizes]
 
-        is_installed = len(installed_sizes) == len(INTEGRATION_SIZES)
+        is_installed = len(installed_sizes) == len(self.sizes)
         is_partial = bool(installed_sizes) and not is_installed
 
         return IntegrationStatus(
@@ -555,7 +582,10 @@ class ThunarIntegrator:
         )
 
 
-def get_integrator(file_manager: str | None = None) -> Integrator:
+def get_integrator(
+    file_manager: str | None = None,
+    config_path: Path | str | None = None,
+) -> Integrator:
     """Get the integrator instance for the requested or detected file manager."""
     fm = file_manager.lower() if file_manager else None
 
@@ -566,13 +596,13 @@ def get_integrator(file_manager: str | None = None) -> Integrator:
         fm = detected_fm or "nemo"
 
     if fm == "nemo":
-        return NemoIntegrator()
+        return NemoIntegrator(config_path=config_path)
     if fm == "nautilus":
-        return NautilusIntegrator()
+        return NautilusIntegrator(config_path=config_path)
     if fm == "dolphin":
-        return DolphinIntegrator()
+        return DolphinIntegrator(config_path=config_path)
     if fm == "thunar":
-        return ThunarIntegrator()
+        return ThunarIntegrator(config_path=config_path)
 
     raise ValueError(
         f"Unsupported file manager: {fm}. Supported: nemo, nautilus, dolphin, thunar"
