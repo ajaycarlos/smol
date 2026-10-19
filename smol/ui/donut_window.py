@@ -59,6 +59,7 @@ from smol.core.size import format_size, parse_size
 from smol.ui.custom_input import CustomInputDialog
 from smol.ui.donut_geometry import DonutGeometry
 from smol.ui.prediction import Prediction, PredictionService
+from smol.ui.toast import ToastWindow
 from smol.ui.worker import ShrinkWorker
 
 DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
@@ -350,6 +351,9 @@ class DonutWindow(QWidget):
         self._orig_size_bytes: int = 0
         self._shrink_start_time: float = 0.0
         self._is_fast_job: bool = False
+        self._checkmark_burst: float = 0.0
+        self._anim_checkmark_burst: QPropertyAnimation | None = None
+        self._toast: ToastWindow | None = None
 
         # Build segment items with dimming logic and geometry
         self._init_segments()
@@ -405,6 +409,16 @@ class DonutWindow(QWidget):
     @ring_pulse.setter
     def ring_pulse(self, val: float) -> None:
         self._ring_pulse = max(0.0, min(1.0, float(val)))
+        self.update()
+
+    @Property(float)
+    def checkmark_burst(self) -> float:
+        """Burst progression factor (0.0 to 1.0) for soft checkmark burst animation."""
+        return self._checkmark_burst
+
+    @checkmark_burst.setter
+    def checkmark_burst(self, val: float) -> None:
+        self._checkmark_burst = max(0.0, min(1.0, float(val)))
         self.update()
 
     def _init_file_data(self) -> None:
@@ -754,6 +768,15 @@ class DonutWindow(QWidget):
             self._anim_transition.stop()
         if self._anim_pulse is not None and self._anim_pulse.state():
             self._anim_pulse.stop()
+        if (
+            self._anim_checkmark_burst is not None
+            and self._anim_checkmark_burst.state()
+        ):
+            self._anim_checkmark_burst.stop()
+        self._checkmark_burst = 0.0
+        if self._toast is not None:
+            self._toast.close()
+            self._toast = None
         for seg in getattr(self, "segments", []):
             if seg._hover_anim is not None and seg._hover_anim.state():
                 seg._hover_anim.stop()
@@ -1155,6 +1178,12 @@ class DonutWindow(QWidget):
         if elapsed_ms < 300.0:
             self._is_fast_job = True
             # Job took under 300 ms: skip straight to done — no fake progress
+            if self._anim_fade_others is not None and self._anim_fade_others.state():
+                self._anim_fade_others.stop()
+            if self._anim_transition is not None and self._anim_transition.state():
+                self._anim_transition.stop()
+            if self._anim_pulse is not None and self._anim_pulse.state():
+                self._anim_pulse.stop()
             self._other_segments_opacity = 0.0
             self._drop_transition = 1.0
             self._ring_pulse = 0.0
@@ -1205,8 +1234,60 @@ class DonutWindow(QWidget):
                 self.result_message = ", ".join(parts) if parts else "Complete"
 
             self.shrink_finished.emit(results)
+            self._start_completion_sequence(results)
 
         self.update()
+
+    def _start_completion_sequence(
+        self, results: list[tuple[Path, Result]]
+    ) -> None:
+        """Execute ring snap shut -> soft checkmark burst (~600 ms)
+        -> toast slide in.
+        """
+        self._ring_progress = 1.0  # Ring snaps shut
+        if self.reduce_motion:
+            self._checkmark_burst = 1.0
+            self.update()
+            self._show_completion_toast(results)
+            return
+
+        self._checkmark_burst = 0.0
+        if (
+            self._anim_checkmark_burst is not None
+            and self._anim_checkmark_burst.state()
+        ):
+            self._anim_checkmark_burst.stop()
+
+        self._anim_checkmark_burst = QPropertyAnimation(
+            self, b"checkmark_burst", self
+        )
+        self._anim_checkmark_burst.setDuration(600)
+        self._anim_checkmark_burst.setStartValue(0.0)
+        self._anim_checkmark_burst.setEndValue(1.0)
+        self._anim_checkmark_burst.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim_checkmark_burst.finished.connect(
+            lambda: self._show_completion_toast(results)
+        )
+        self._anim_checkmark_burst.start()
+
+    def _show_completion_toast(
+        self, results: list[tuple[Path, Result]]
+    ) -> None:
+        """Summon completion toast near cursor/corner and hide donut window."""
+        if self.state != "success":
+            return
+
+        cursor_pos = QCursor.pos()
+        toast = ToastWindow(
+            results=results,
+            cursor_pos=cursor_pos,
+            reduce_motion=self.reduce_motion,
+        )
+        self._toast = toast
+        toast.show()
+        toast.raise_()
+        toast.dismissed.connect(self.close)
+        self.hide()
 
     def retry_smallest(self) -> None:
         """Retry shrinking at the smallest achievable target size."""
@@ -1663,43 +1744,110 @@ class DonutWindow(QWidget):
             painter.drawText(count_rect, Qt.AlignmentFlag.AlignCenter, cur_sz_str)
 
         elif self.state == "success":
-            # Success state in centre
-            font_done = QFont()
-            font_done.setPointSize(12)
-            font_done.setBold(True)
-            painter.setFont(font_done)
-            done_rect = QRectF(
+            # Success state: ring snaps shut + soft checkmark burst (~600 ms)
+            thumb_cx = center_x
+            thumb_cy = center_y - 20.0
+            thumb_ring_r = 29.0
+
+            # Ring track
+            painter.setPen(QPen(QColor(52, 211, 153, 40), 3.5, Qt.PenStyle.SolidLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(thumb_cx, thumb_cy), thumb_ring_r, thumb_ring_r)
+
+            # Ring snapped shut (100% full circle) in emerald
+            painter.setPen(
+                QPen(
+                    QColor(52, 211, 153, 255),
+                    3.5,
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                )
+            )
+            painter.drawEllipse(QPointF(thumb_cx, thumb_cy), thumb_ring_r, thumb_ring_r)
+
+            # Soft checkmark burst
+            burst = self._checkmark_burst
+            if burst > 0.0:
+                # Expanding translucent halo
+                halo_r = thumb_ring_r + 14.0 * burst
+                halo_alpha = int(140 * (1.0 - burst))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(52, 211, 153, halo_alpha))
+                painter.drawEllipse(QPointF(thumb_cx, thumb_cy), halo_r, halo_r)
+
+                # Soft checkmark icon
+                scale = 0.5 + 0.55 * min(1.0, burst * 1.3)
+                pen_burst = QPen(
+                    QColor(52, 211, 153, 255),
+                    3.5,
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                    Qt.PenJoinStyle.RoundJoin,
+                )
+                painter.setPen(pen_burst)
+                path = QPainterPath()
+                path.moveTo(thumb_cx - 9.0 * scale, thumb_cy + 0.5 * scale)
+                path.lineTo(thumb_cx - 2.5 * scale, thumb_cy + 7.5 * scale)
+                path.lineTo(thumb_cx + 10.0 * scale, thumb_cy - 7.0 * scale)
+                painter.drawPath(path)
+            else:
+                pen_chk = QPen(
+                    QColor(52, 211, 153, 255),
+                    3.5,
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                    Qt.PenJoinStyle.RoundJoin,
+                )
+                painter.setPen(pen_chk)
+                path = QPainterPath()
+                path.moveTo(thumb_cx - 9.0, thumb_cy + 0.5)
+                path.lineTo(thumb_cx - 2.5, thumb_cy + 7.5)
+                path.lineTo(thumb_cx + 10.0, thumb_cy - 7.0)
+                painter.drawPath(path)
+
+            # Filename below ring
+            font_name = QFont()
+            font_name.setPointSize(9)
+            font_name.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font_name)
+            fm = QFontMetrics(font_name)
+            name_w = int((center_card_r - 8.0) * 2)
+            elided_name = fm.elidedText(
+                self.file_name, Qt.TextElideMode.ElideMiddle, name_w
+            )
+            name_rect = QRectF(
                 center_x - center_card_r + 8.0,
-                center_y - 20.0,
-                (center_card_r - 8.0) * 2,
-                22.0,
+                center_y + 14.0,
+                name_w,
+                16.0,
             )
             painter.setPen(QColor(0, 0, 0, 160))
             painter.drawText(
-                done_rect.adjusted(0, 1, 0, 1),
+                name_rect.adjusted(0, 1, 0, 1),
                 Qt.AlignmentFlag.AlignCenter,
-                "✓ Done",
+                elided_name,
             )
-            painter.setPen(QColor(52, 211, 153, 255))  # Emerald green
-            painter.drawText(done_rect, Qt.AlignmentFlag.AlignCenter, "✓ Done")
+            painter.setPen(QColor(240, 245, 255, 240))
+            painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
 
+            # Result size message below filename
             font_res = QFont()
-            font_res.setPointSize(9)
-            font_res.setWeight(QFont.Weight.DemiBold)
+            font_res.setPointSize(10)
+            font_res.setBold(True)
             painter.setFont(font_res)
             res_rect = QRectF(
                 center_x - center_card_r + 8.0,
-                center_y + 6.0,
+                center_y + 32.0,
                 (center_card_r - 8.0) * 2,
                 20.0,
             )
-            painter.setPen(QColor(0, 0, 0, 140))
+            painter.setPen(QColor(0, 0, 0, 160))
             painter.drawText(
                 res_rect.adjusted(0, 1, 0, 1),
                 Qt.AlignmentFlag.AlignCenter,
                 self.result_message or "Complete",
             )
-            painter.setPen(QColor(240, 245, 255, 240))
+            painter.setPen(QColor(52, 211, 153, 255))
             painter.drawText(
                 res_rect,
                 Qt.AlignmentFlag.AlignCenter,
@@ -1707,17 +1855,74 @@ class DonutWindow(QWidget):
             )
 
         elif self.state == "failure":
-            # Honest engine message and retry option
-            font_err_title = QFont()
-            font_err_title.setPointSize(10)
-            font_err_title.setBold(True)
-            painter.setFont(font_err_title)
-            err_title_rect = QRectF(
-                center_x - center_card_r + 8.0,
-                center_y - 36.0,
-                (center_card_r - 8.0) * 2,
-                18.0,
+            # Failure state: amber ring + honest message
+            # + "Use smallest possible" button
+            is_compact = center_card_r < 70.0
+            thumb_cx = center_x
+            thumb_cy = center_y - (20.0 if is_compact else 24.0)
+            thumb_ring_r = 18.0 if is_compact else 25.0
+
+            # Amber ring track
+            painter.setPen(QPen(QColor(245, 158, 11, 45), 3.5, Qt.PenStyle.SolidLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(QPointF(thumb_cx, thumb_cy), thumb_ring_r, thumb_ring_r)
+
+            # Amber progress ring
+            painter.setPen(
+                QPen(
+                    QColor(245, 158, 11, 235),
+                    3.5,
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                )
             )
+            painter.drawEllipse(QPointF(thumb_cx, thumb_cy), thumb_ring_r, thumb_ring_r)
+
+            # Thumbnail or warning icon inside amber ring
+            max_thumb = thumb_ring_r * 1.4
+            if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
+                tw = min(max_thumb, float(self.thumbnail_pixmap.width()))
+                th = min(max_thumb, float(self.thumbnail_pixmap.height()))
+                tx = thumb_cx - (tw / 2.0)
+                ty = thumb_cy - (th / 2.0)
+
+                painter.save()
+                clip_path = QPainterPath()
+                clip_path.addRoundedRect(QRectF(tx, ty, tw, th), 4.0, 4.0)
+                painter.setClipPath(clip_path)
+                painter.drawPixmap(
+                    int(tx),
+                    int(ty),
+                    self.thumbnail_pixmap.scaled(
+                        int(tw),
+                        int(th),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    ),
+                )
+                painter.restore()
+
+                painter.setPen(QPen(QColor(245, 158, 11, 100), 1.0))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(QRectF(tx, ty, tw, th), 4.0, 4.0)
+            else:
+                font_warn = QFont()
+                font_warn.setPointSize(12 if is_compact else 14)
+                font_warn.setBold(True)
+                painter.setFont(font_warn)
+                painter.setPen(QColor(254, 243, 199, 230))
+                painter.drawText(
+                    QRectF(
+                        thumb_cx - thumb_ring_r,
+                        thumb_cy - thumb_ring_r,
+                        thumb_ring_r * 2,
+                        thumb_ring_r * 2,
+                    ),
+                    Qt.AlignmentFlag.AlignCenter,
+                    "!",
+                )
+
+            # Honest engine error message
             title_text = "Target too small"
             if self.failure_error:
                 err_lower = self.failure_error.lower()
@@ -1728,6 +1933,17 @@ class DonutWindow(QWidget):
                 elif "not found" in err_lower:
                     title_text = "File not found"
 
+            font_err_title = QFont()
+            font_err_title.setPointSize(9 if is_compact else 10)
+            font_err_title.setBold(True)
+            painter.setFont(font_err_title)
+            err_title_y = center_y + (2.0 if is_compact else 5.0)
+            err_title_rect = QRectF(
+                center_x - center_card_r + 6.0,
+                err_title_y,
+                (center_card_r - 6.0) * 2,
+                16.0,
+            )
             painter.setPen(QColor(0, 0, 0, 160))
             painter.drawText(
                 err_title_rect.adjusted(0, 1, 0, 1),
@@ -1735,14 +1951,10 @@ class DonutWindow(QWidget):
                 title_text,
             )
             painter.setPen(QColor(251, 191, 36, 255))  # Amber
-            painter.drawText(
-                err_title_rect,
-                Qt.AlignmentFlag.AlignCenter,
-                title_text,
-            )
+            painter.drawText(err_title_rect, Qt.AlignmentFlag.AlignCenter, title_text)
 
             font_err_msg = QFont()
-            font_err_msg.setPointSize(8)
+            font_err_msg.setPointSize(7.5 if is_compact else 8.5)
             painter.setFont(font_err_msg)
 
             fm = QFontMetrics(font_err_msg)
@@ -1757,16 +1969,18 @@ class DonutWindow(QWidget):
                     summary_err = m.group(1)
             elif "read-only" in summary_err.lower():
                 summary_err = "Output folder is read-only"
+
             elided_err = fm.elidedText(
                 summary_err,
                 Qt.TextElideMode.ElideMiddle,
-                int(center_card_r * 2 - 12),
+                int(center_card_r * 2 - 10),
             )
+            err_msg_y = center_y + (16.0 if is_compact else 21.0)
             msg_rect = QRectF(
-                center_x - center_card_r + 6.0,
-                center_y - 14.0,
-                (center_card_r - 6.0) * 2,
-                18.0,
+                center_x - center_card_r + 5.0,
+                err_msg_y,
+                (center_card_r - 5.0) * 2,
+                16.0,
             )
             painter.setPen(QColor(0, 0, 0, 140))
             painter.drawText(
@@ -1777,24 +1991,25 @@ class DonutWindow(QWidget):
             painter.setPen(QColor(220, 225, 235, 220))
             painter.drawText(msg_rect, Qt.AlignmentFlag.AlignCenter, elided_err)
 
+            # "Use smallest possible" button
             if self.retry_target_bytes is not None:
-                sz_str = format_size(self.retry_target_bytes, spaced=True)
-                retry_text = f"Retry ({sz_str})"
-                btn_w = min(110.0, center_card_r * 2 - 16.0)
-                btn_h = 24.0
+                retry_text = "Use smallest possible"
+                btn_w = min(136.0, center_card_r * 2 - 8.0)
+                btn_h = 22.0 if is_compact else 24.0
+                btn_y = center_y + (31.0 if is_compact else 37.0)
                 self._retry_rect = QRectF(
                     center_x - btn_w / 2.0,
-                    center_y + 12.0,
+                    btn_y,
                     btn_w,
                     btn_h,
                 )
 
                 painter.setBrush(QColor(245, 158, 11, 45))
-                painter.setPen(QPen(QColor(245, 158, 11, 180), 1.2))
+                painter.setPen(QPen(QColor(245, 158, 11, 185), 1.2))
                 painter.drawRoundedRect(self._retry_rect, 6.0, 6.0)
 
                 font_btn = QFont()
-                font_btn.setPointSize(8)
+                font_btn.setPointSize(7.5 if is_compact else 8.0)
                 font_btn.setBold(True)
                 painter.setFont(font_btn)
                 painter.setPen(QColor(254, 243, 199, 255))
@@ -1805,6 +2020,7 @@ class DonutWindow(QWidget):
                 )
             else:
                 self._retry_rect = None
+
 
         else:
             # Idle state: balanced thumbnail, filename, and size / prediction

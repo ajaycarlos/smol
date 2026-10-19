@@ -225,13 +225,22 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Reduced motion support: when `reduce_motion=True`, animations resolve instantly (opacity = 0, scale/pulse = 0) with simple state transitions.
   - Test suite in `tests/ui/test_donut_drop_progress.py` (7 tests) and verification harness `scripts/verify_drop_progress.py`.
   - VERIFY: shrinking `tests/samples/portrait.jpg` (1.24 MB -> 99.5 KB) logs 10 real progress steps, smooth ring fill to 100%, and countdown from 1.24 MB down to 99,508 bytes over ~508 ms; all 288 tests pass; ruff clean.
+- Implement completion sequence, soft checkmark burst (~600 ms), sliding toast, undo safety, and amber failure retry:
+  - Ring snaps shut: sets ring progress to 100% upon compression completion.
+  - Soft checkmark burst: plays ~600 ms OutCubic burst with expanding translucent emerald halo and scaling checkmark vector path (instant under `reduce_motion=True`).
+  - Toast overlay (`ToastWindow` in `smol/ui/toast.py`): slides in near cursor/corner with dark sapphire liquid glass styling, formatted text (`photo.jpg  1.02 MB → 97 KB`), and action buttons: Open folder, Undo, Copy path.
+  - Auto-hide & hover pause: 6-second auto-dismiss countdown pauses when mouse enters the toast and resumes when mouse leaves.
+  - Hard safety invariant: Undo strictly deletes only the newly created output file, with defense-in-depth safety checks ensuring the original source file is never deleted or modified.
+  - Failure state: renders amber progress ring around thumbnail, honest engine error explanation, and "Use smallest possible" button that triggers retry at the smallest achievable size.
+  - Test suites in `tests/ui/test_toast.py` (8 tests) and `tests/ui/test_completion_sequence.py` (3 tests) plus verification script `scripts/verify_completion_toast.py`.
+  - VERIFY: end-to-end verification confirms ring snap, 600 ms burst, toast display, 6s timer pause/resume on hover, copy path, undo output deletion with original file 100% intact, and failure amber ring with "Use smallest possible" retry; all 299 tests pass; ruff clean.
 
 ## Current milestone
-M5 — Animation and polish (In progress: open, hover, prediction, drop pulse, real ring progress, and size countdown completed).
+M5 — Animation and polish (Completed: open, hover, prediction, drop pulse, ring progress, size countdown, checkmark burst, toast, undo, amber failure retry).
 
 ## Next
-- Done checkmark burst (600 ms) and toast with Open folder / Undo / Copy path.
-- Failure state in donut with shake animation and honest reason.
+- M6 — Settings window.
+
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).
