@@ -195,6 +195,13 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added test suites in `tests/daemon/test_drop_robustness.py` and `tests/daemon/test_daemon_logs.py` (10 new tests, 262 total passed).
   - VERIFY: `smol daemon logs` displays activity summary and recent history; all 262 tests pass; `uv run ruff check .` clean.
 
+- Add XDG autostart integration `smol integrate autostart install|uninstall|status`:
+  - Created `AutostartIntegrator` (`smol/integrations/autostart.py`) managing `~/.config/autostart/smol.desktop` (honoring `$XDG_CONFIG_HOME`) to start `smol daemon start` at desktop login.
+  - Reversible and idempotent install/uninstall operations with atomic file writes via temporary file replacement.
+  - Wired `smol integrate autostart install|uninstall|status` into CLI (`smol/cli.py`) alongside existing file manager actions.
+  - Added test suite in `tests/test_autostart.py` (7 tests covering file creation, status, idempotency, and CLI dispatch).
+  - VERIFY: `smol integrate autostart install/status/uninstall` verified end-to-end; all 269 tests pass; `uv run ruff check .` clean.
+
 ## Current milestone
 M4 complete. Next: M5 — Animation and polish.
 

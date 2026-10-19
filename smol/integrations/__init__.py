@@ -1,5 +1,11 @@
 """smol integrations — file-manager right-click scripts, autostart files."""
 
+from smol.integrations.autostart import (
+    AutostartIntegrator,
+    AutostartResult,
+    AutostartStatus,
+    get_autostart_dir,
+)
 from smol.integrations.manager import (
     INTEGRATION_SIZES,
     DolphinIntegrator,
@@ -14,6 +20,9 @@ from smol.integrations.manager import (
 
 __all__ = [
     "INTEGRATION_SIZES",
+    "AutostartIntegrator",
+    "AutostartResult",
+    "AutostartStatus",
     "DolphinIntegrator",
     "IntegrationResult",
     "IntegrationStatus",
@@ -21,5 +30,7 @@ __all__ = [
     "NautilusIntegrator",
     "NemoIntegrator",
     "ThunarIntegrator",
+    "get_autostart_dir",
     "get_integrator",
 ]
+

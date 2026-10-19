@@ -11,6 +11,7 @@ from typing import Any
 
 from smol.core.image import shrink_image
 from smol.core.size import format_size, parse_size
+from smol.integrations.autostart import AutostartIntegrator
 from smol.integrations.manager import get_integrator
 from smol.integrations.notifier import (
     JobNotifier,
@@ -276,16 +277,77 @@ def _notify_results(results: list[tuple[Path, Any]]) -> None:
     JobNotifier(notify=True).notify_results(results)
 
 
-def integrate(argv: list[str]) -> int:
-    """Handle `smol integrate install|uninstall|status` subcommand."""
+def integrate_autostart(argv: list[str]) -> int:
+    """Handle `smol integrate autostart install|uninstall|status` subcommand."""
     parser = argparse.ArgumentParser(
-        prog="smol integrate",
-        description="Manage file manager right-click context menu integration",
+        prog="smol integrate autostart",
+        description="Manage XDG autostart desktop entry for smol daemon",
     )
     parser.add_argument(
         "action",
         choices=["install", "uninstall", "status"],
         help="Action to perform: install, uninstall, or status",
+    )
+
+    if "--help" in argv or "-h" in argv or not argv:
+        parser.print_help()
+        return 0
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    integrator = AutostartIntegrator()
+    if args.action == "install":
+        res = integrator.install()
+        if res.ok:
+            print(f"✓ {res.message}")
+            return 0
+        else:
+            print(f"✗ {res.message}", file=sys.stderr)
+            return 1
+
+    if args.action == "uninstall":
+        res = integrator.uninstall()
+        if res.ok:
+            print(f"✓ {res.message}")
+            return 0
+        else:
+            print(f"✗ {res.message}", file=sys.stderr)
+            return 1
+
+    if args.action == "status":
+        stat = integrator.status()
+        status_text = "Installed (enabled)" if stat.installed else "Not installed"
+        print(f"Autostart: {status_text}")
+        print(f"File:      {stat.desktop_file}")
+        print(f"Details:   {stat.details}")
+        return 0
+
+    return 0
+
+
+def integrate(argv: list[str]) -> int:
+    """Handle `smol integrate [autostart] install|uninstall|status` subcommand."""
+    if argv and argv[0] == "autostart":
+        return integrate_autostart(argv[1:])
+
+    parser = argparse.ArgumentParser(
+        prog="smol integrate",
+        description=(
+            "Manage file manager right-click context menu integration "
+            "or desktop autostart"
+        ),
+        epilog=(
+            "Use 'smol integrate autostart [install|uninstall|status]' "
+            "to manage desktop autostart."
+        ),
+    )
+    parser.add_argument(
+        "action",
+        choices=["install", "uninstall", "status", "autostart"],
+        help="Action to perform: install, uninstall, status (or 'autostart')",
     )
     parser.add_argument(
         "--file-manager",
@@ -303,6 +365,9 @@ def integrate(argv: list[str]) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
+
+    if args.action == "autostart":
+        return integrate_autostart([])
 
     try:
         integrator = get_integrator(args.file_manager)
@@ -343,6 +408,7 @@ def integrate(argv: list[str]) -> int:
         return 0
 
     return 0
+
 
 
 def donut(argv: list[str]) -> int:
