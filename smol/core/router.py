@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from smol.core.audio import shrink_audio
 from smol.core.image import shrink_image
 from smol.core.pdf import shrink_pdf
 from smol.core.result import Result
@@ -39,12 +40,22 @@ VIDEO_EXTENSIONS = {
     ".avi",
 }
 
+AUDIO_EXTENSIONS = {
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".opus",
+    ".ogg",
+    ".flac",
+    ".wav",
+}
+
 
 def detect_file_type(src: str | Path) -> str:
-    """Detect whether a file is an image, pdf, video, or unsupported.
+    """Detect whether a file is an image, pdf, video, audio, or unsupported.
 
     Returns:
-        'image', 'pdf', 'video', or 'unsupported'
+        'image', 'pdf', 'video', 'audio', or 'unsupported'
     """
     path = Path(src)
     ext = path.suffix.lower()
@@ -55,6 +66,8 @@ def detect_file_type(src: str | Path) -> str:
         return "image"
     if ext in VIDEO_EXTENSIONS:
         return "video"
+    if ext in AUDIO_EXTENSIONS:
+        return "audio"
 
     # If extension is missing or unrecognized, inspect file header if file exists
     if path.is_file():
@@ -97,6 +110,8 @@ def shrink_file(
         return shrink_pdf(src_path, target_bytes, options=options)
     elif kind == "video":
         return shrink_video(src_path, target_bytes, options=options)
+    elif kind == "audio":
+        return shrink_audio(src_path, target_bytes, options=options)
     else:
         ext_str = f"'{src_path.suffix}'" if src_path.suffix else f"'{src_path.name}'"
         return Result(
@@ -104,7 +119,7 @@ def shrink_file(
             original_bytes=orig_bytes,
             error=(
                 f"Unsupported file format {ext_str}; "
-                "only images and PDFs are currently supported."
+                "only images, PDFs, videos, and audio are currently supported."
             ),
         )
 

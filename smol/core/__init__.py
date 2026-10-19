@@ -1,6 +1,7 @@
 # smol core engine — file shrinking pipeline
 # NO UI imports. Must run headless.
 
+from smol.core.audio import shrink_audio
 from smol.core.image import shrink_image
 from smol.core.paths import output_path
 from smol.core.pdf import shrink_pdf
@@ -15,6 +16,7 @@ __all__ = [
     "format_size",
     "output_path",
     "parse_size",
+    "shrink_audio",
     "shrink_file",
     "shrink_image",
     "shrink_pdf",

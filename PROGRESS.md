@@ -322,16 +322,33 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added instant dry-run prediction support in `shrink_video` for Donut segment hover (`~{size}, {w}×{h}`).
   - Added fast 1-frame ffmpeg video thumbnail rendering in `smol/ui/donut_window.py` (`_load_thumbnail_pixmap`).
   - Added video extension awareness to `DonutWindow._first_image_path`.
-  - Verified end-to-end: a 13.3 MB 30s video clip compressed to 8 MB lands at 7.39 MB via both `shrink_file` and CLI `smol shrink`. All 381 tests pass; ruff clean.
+- Implement audio compression engine matching codec family with bitrate calculation (Milestone M8 / PLAN.md Section 7.3):
+  - Created `smol.core.audio` (`shrink_audio`) matching input family to appropriate audio encoder:
+    * MP3 family (`.mp3`): `libmp3lame`
+    * AAC / M4A family (`.m4a`, `.aac`): `aac`
+    * Opus / OGG family (`.opus`, `.ogg`): `libopus` with `-vbr constrained`
+    * Fallback for uncompressed/lossless (`.wav`, `.flac`): `libmp3lame`
+  - Computes target bitrate from target bytes and duration with 0.92 safety factor via `compute_audio_bitrate`.
+  - Enforces 24 kbps floor (`AUDIO_BITRATE_FLOOR` = 24,000 bps) returning honest failure stating smallest achievable size if target is impossible.
+  - Implements bitrate overshoot retry ladder: cuts bitrate by 5% on overshoot (up to 3 retries).
+  - Post-write size verification ensuring disk size strictly <= target bytes.
+  - Non-destructive atomic destination write with collision resolution (`-1`, `-2`).
+  - Fast bypass for files already <= target bytes returning `ok=True` without rewriting.
+  - Instant dry-run prediction support (`options={"dry_run": True}`).
+  - Exported `shrink_audio` in `smol.core` and wired into `smol.core.router` (`detect_file_type` and `shrink_file`).
+  - Added unit test suite in `tests/core/test_audio.py` (10 tests) covering all codec families, 24 kbps floor enforcement, untouched original integrity, already-small bypass, dry-run, routing dispatch, retry on overshoot, and 3-minute tone playback check.
+  - Created standalone verification script `scripts/verify_audio_shrink.py`.
+  - VERIFY: a 3-minute generated tone (180s, ~4.32 MB) shrinks to 1 MB target, landing at 900.41 KB (90.04% of target), and passes complete decode/playback check with 0 errors; full test suite (391 passed in ~49s); `uv run ruff check .` clean.
 
 ## Current milestone
 M8 — Video and audio engine (In progress).
 
 ## Next
-- Audio compression pipeline (`shrink_audio`) and routing integration for video and audio in `smol.core.router`.
-
+- Video/audio integration review and Milestone M8 completion.
 
 ## Decisions
+- 2026-10-20: In `smol/core/audio.py`, match input audio families (`.mp3` -> `libmp3lame`, `.m4a`/`.aac` -> `aac`, `.opus`/`.ogg` -> `libopus`). For `libopus`, specify `-vbr constrained` to ensure adherence to calculated target bitrates.
+- 2026-10-20: In `smol/core/audio.py`, enforce strict 24 kbps floor via `compute_audio_bitrate` with 0.92 safety margin, failing honestly with smallest achievable size when target bandwidth is too low.
 - 2026-10-19: In `smol/core/video.py`, isolate ffmpeg pass logs in a dedicated temporary directory (`smol_passlog_*`) deleted in a `finally` block, ensuring no dangling `ffmpeg2pass*` files on disk even during failures or exceptions.
 - 2026-10-19: On video target overshoot, retry up to 3 times cutting video bitrate by 5% on each attempt before honest failure reporting.
 - 2026-10-19: In `smol/core/media_math.py`, keep calculation functions pure (zero ffmpeg calls), using 0.92 safety factor, 64 kbps default audio allocation, 0.06 bits-per-pixel threshold for ladder step-down, and 24 kbps audio floor.
