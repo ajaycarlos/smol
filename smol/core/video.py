@@ -28,13 +28,12 @@ from smol.config import load_config
 from smol.core.media_math import (
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_SAFETY_FACTOR,
-    compute_video_bitrate,
     decide_resolution,
     probe_media,
 )
 from smol.core.paths import output_path
 from smol.core.result import Result
-from smol.core.size import format_size
+from smol.core.size import format_size, parse_size
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +200,12 @@ def shrink_video(
     if orig_bytes == 0:
         return Result(ok=False, original_bytes=0, error="File is empty (0 bytes).")
 
+    # Normalize target_bytes
+    if isinstance(target_bytes, str):
+        target_bytes = parse_size(target_bytes)
+    else:
+        target_bytes = int(target_bytes)
+
     # Load configuration
     cfg = load_config()
     opts = options or {}
@@ -238,15 +243,15 @@ def shrink_video(
         )
 
     # 1. Already <= target_bytes bypass
-    if orig_bytes <= target_bytes and not force_reencode:
+    if not force_reencode and orig_bytes <= target_bytes:
         return Result(
             ok=True,
             output_path=src_path,
             original_bytes=orig_bytes,
             final_bytes=orig_bytes,
             warning=(
-                f"File is already {format_size(orig_bytes)}, "
-                f"<= target {format_size(target_bytes)}. Kept original."
+                f"File is already small enough ({format_size(orig_bytes)} <= "
+                f"target {format_size(target_bytes)}); kept original."
             ),
         )
 
@@ -274,49 +279,34 @@ def shrink_video(
             error=f"Could not determine video duration for {src_path.name}",
         )
 
-    # 3. Audio allocation & initial video bitrate
-    audio_bitrate: int | None = None
-    if media_info.has_audio:
-        # Default 64 kbps audio
-        audio_bitrate = DEFAULT_AUDIO_BITRATE
-        # If target is tight, verify total bits can accommodate audio
-        total_avail_bps = (target_bytes * 8 * safety_factor) / media_info.duration
-        if total_avail_bps <= audio_bitrate:
-            return Result(
-                ok=False,
-                original_bytes=orig_bytes,
-                error=(
-                    f"Target {format_size(target_bytes)} is too small for "
-                    f"{media_info.duration:.1f}s video: available bandwidth "
-                    f"({total_avail_bps / 1000:.1f} kbps) cannot fit audio and video."
-                ),
-            )
-
-    try:
-        video_bitrate = compute_video_bitrate(
-            duration=media_info.duration,
-            target_bytes=target_bytes,
-            audio_bitrate=audio_bitrate or 0,
-            safety_factor=safety_factor,
-        )
-    except ValueError as exc:
-        return Result(
-            ok=False,
-            original_bytes=orig_bytes,
-            error=f"Target impossible: {exc}",
-        )
-
-    # Minimum video bitrate sanity check (under 16 kbps video is unusable)
-    if video_bitrate < 16_000:
+    # 3. Bandwidth check & bitrate allocation
+    # Only reject pre-emptively if total bandwidth is below
+    # minimum viable threshold (50 kbps)
+    MIN_TOTAL_BPS = 50_000
+    total_avail_bps = (target_bytes * 8 * safety_factor) / media_info.duration
+    if total_avail_bps < MIN_TOTAL_BPS:
         return Result(
             ok=False,
             original_bytes=orig_bytes,
             error=(
-                f"Target {format_size(target_bytes)} impossible for "
-                f"{media_info.duration:.1f}s: calculated video bitrate "
-                f"{video_bitrate / 1000:.1f} kbps is below minimum floor."
+                f"Target {format_size(target_bytes)} is too small for "
+                f"{media_info.duration:.1f}s video: available bandwidth "
+                f"({total_avail_bps / 1000:.1f} kbps) is below minimum "
+                "viable threshold (50 kbps)."
             ),
         )
+
+    # Allocate audio and video bitrates without pre-emptive rejection
+    audio_bitrate: int | None = None
+    if media_info.has_audio:
+        if total_avail_bps >= 128_000:
+            audio_bitrate = DEFAULT_AUDIO_BITRATE  # 64 kbps
+        else:
+            # Scale audio down on tight budgets so video has room
+            audio_bitrate = max(24_000, int(total_avail_bps * 0.25))
+        video_bitrate = max(16_000, int(total_avail_bps - audio_bitrate))
+    else:
+        video_bitrate = max(16_000, int(total_avail_bps))
 
     # 4. Decide resolution
     source_res = media_info.resolution

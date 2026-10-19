@@ -288,3 +288,59 @@ def test_shrink_video_without_audio(tmp_path: Path):
     assert info.has_video
     assert not info.has_audio
 
+
+def test_shrink_video_target_ge_original(sample_clip: Path):
+    """Target >= original size returns original with 'already small enough' note."""
+    orig_bytes = sample_clip.stat().st_size
+
+    # Target equal to original size
+    res_eq = shrink_video(sample_clip, target_bytes=orig_bytes)
+    assert res_eq.ok
+    assert res_eq.final_bytes == orig_bytes
+    assert res_eq.warning is not None
+    assert "already small enough" in res_eq.warning.lower()
+
+    # Target greater than original size
+    res_gt = shrink_video(sample_clip, target_bytes=orig_bytes + 500_000)
+    assert res_gt.ok
+    assert res_gt.final_bytes == orig_bytes
+    assert res_gt.warning is not None
+    assert "already small enough" in res_gt.warning.lower()
+
+
+def test_shrink_video_target_80_percent(sample_clip: Path, tmp_path: Path):
+    """Target = 80% of original attempts encode and returns result <= target."""
+    test_src = tmp_path / "clip_80pct.mp4"
+    shutil.copy2(sample_clip, test_src)
+    orig_bytes = test_src.stat().st_size
+    target_bytes = int(orig_bytes * 0.80)
+
+    res = shrink_video(test_src, target_bytes=target_bytes)
+    assert res.ok
+    assert res.output_path is not None
+    assert res.output_path.exists()
+    assert res.final_bytes <= target_bytes
+    assert res.final_bytes > 0
+
+
+def test_shrink_video_target_10_percent_high_bitrate_fails_honestly(
+    tmp_path: Path,
+):
+    """Target = 10% of high-bitrate clip attempts encode and fails honestly."""
+    clip_path = tmp_path / "high_bitrate.mp4"
+    _generate_synthetic_video(
+        clip_path, duration=3.0, width=1280, height=720, fps=25
+    )
+    orig_bytes = clip_path.stat().st_size
+    target_bytes = int(orig_bytes * 0.10)
+
+    res = shrink_video(clip_path, target_bytes=target_bytes)
+    # The engine must attempt the encode rather than pre-emptively rejecting
+    assert res.steps > 0
+    if not res.ok:
+        assert res.error is not None
+        assert "unreachable" in res.error.lower() or "smallest" in res.error.lower()
+    else:
+        assert res.final_bytes <= target_bytes
+
+

@@ -313,6 +313,12 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Exported `shrink_video` in `smol.core`.
   - Added unit and integration tests in `tests/core/test_video.py` (11 tests).
   - VERIFY: `scripts/verify_video_shrink.py` generated 30s 1080p synthetic clip (~19.3 MB) and shrank to 8 MB target, landing at 7.39 MB (7,391,367 bytes = 92.39% of target) at 1280x720, and complete decode playback check passed with 0 errors; full test suite (378 passed); ruff clean.
+- Fix video engine pre-emptive early exit and normalize "already small enough" note (`smol/core/video.py`):
+  - Normalized `target_bytes` (supporting int, float, and string representations via `parse_size`).
+  - Added "already small enough" bypass when target >= original size returning original file with warning matching image engine semantics.
+  - Removed pre-emptive bitrate/audio rejections; only reject early if total bandwidth is below minimum viable threshold (50 kbps total).
+  - Always attempt two-pass encode when total bandwidth >= 50 kbps, dynamically scaling audio down to 24 kbps on tight budgets.
+  - Added 3 unit tests in `tests/core/test_video.py` covering target >= original size, target = 80%, and target = 10% on high-bitrate clips. All 381 tests pass.
 
 ## Current milestone
 M8 — Video and audio engine (In progress).
