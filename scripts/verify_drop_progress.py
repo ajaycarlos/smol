@@ -67,13 +67,15 @@ def main() -> None:
 
         def on_step(fraction: float, cur_bytes: int) -> None:
             elapsed_ms = (time.perf_counter() - t0) * 1000
-            progress_log.append({
-                "time_ms": elapsed_ms,
-                "progress_pct": fraction * 100.0,
-                "countdown_bytes": cur_bytes,
-                "other_opacity": win.other_segments_opacity,
-                "pulse": win.ring_pulse,
-            })
+            progress_log.append(
+                {
+                    "time_ms": elapsed_ms,
+                    "progress_pct": fraction * 100.0,
+                    "countdown_bytes": cur_bytes,
+                    "other_opacity": win.other_segments_opacity,
+                    "pulse": win.ring_pulse,
+                }
+            )
             print(
                 f"  [{elapsed_ms:5.1f} ms] Ring: {fraction * 100.0:5.1f}% | "
                 f"Countdown: {cur_bytes:>10,d} bytes ({cur_bytes / 1000:6.1f} KB) | "
@@ -105,8 +107,7 @@ def main() -> None:
 
         total_elapsed_ms = (time.perf_counter() - t0) * 1000
         print(
-            f"\nShrink completed in {total_elapsed_ms:.1f} ms "
-            f"with state: '{win.state}'"
+            f"\nShrink completed in {total_elapsed_ms:.1f} ms with state: '{win.state}'"
         )
         print(
             f"Final output size: {win._countdown_bytes:,} bytes "
@@ -116,12 +117,11 @@ def main() -> None:
 
         assert len(progress_log) >= 4, "Expected at least 4 progress step updates"
         assert (
-            progress_log[0]["countdown_bytes"]
-            > progress_log[-1]["countdown_bytes"]
+            progress_log[0]["countdown_bytes"] > progress_log[-1]["countdown_bytes"]
         ), "Countdown size did not decrease"
-        assert (
-            progress_log[-1]["progress_pct"] == 100.0
-        ), "Progress ring did not reach 100%"
+        assert progress_log[-1]["progress_pct"] == 100.0, (
+            "Progress ring did not reach 100%"
+        )
         assert win.other_segments_opacity == 0.0, "Other segments did not fade out"
         assert win._is_fast_job is False, "Over 300 ms should not be fast job"
 

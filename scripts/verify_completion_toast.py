@@ -160,9 +160,9 @@ def run_verify() -> int:
 
         # CRITICAL SAFETY INVARIANT TEST
         assert test_portrait.exists() is True, "CRITICAL: Original file was deleted!"
-        assert (
-            sha256(test_portrait) == orig_hash
-        ), "CRITICAL: Original file content modified!"
+        assert sha256(test_portrait) == orig_hash, (
+            "CRITICAL: Original file content modified!"
+        )
         print("  ✓ CRITICAL PROMISE VERIFIED: Original file is 100% UNTOUCHED!")
 
         win.reset_state()

@@ -117,5 +117,3 @@ def test_cli_donut_demo_fallback_generator(tmp_path, monkeypatch):
 
     assert photo.exists()
     assert photo.stat().st_size > 100_000
-
-

@@ -61,17 +61,15 @@ def test_tracker_right_ctrl_and_right_alt():
 
     # Right Ctrl
     assert "PRESS Right Ctrl" in tracker.on_raw_key_down("Control_R", timestamp=1.0)
-    assert (
-        "RELEASE Right Ctrl held=150ms"
-        in tracker.on_raw_key_up("Control_R", timestamp=1.15)
+    assert "RELEASE Right Ctrl held=150ms" in tracker.on_raw_key_up(
+        "Control_R", timestamp=1.15
     )
     assert tracker.get_summary()["Right Ctrl"] == "PASS"
 
     # Right Alt
     assert "PRESS Right Alt" in tracker.on_raw_key_down("Alt_R", timestamp=2.0)
-    assert (
-        "RELEASE Right Alt held=500ms"
-        in tracker.on_raw_key_up("Alt_R", timestamp=2.5)
+    assert "RELEASE Right Alt held=500ms" in tracker.on_raw_key_up(
+        "Alt_R", timestamp=2.5
     )
     assert tracker.get_summary()["Right Alt"] == "PASS"
 
@@ -122,4 +120,3 @@ def test_x11_query_keymap_stop_check():
     tracker = KeyHoldTracker()
     # Should exit immediately due to stop_check
     run_x11_query_keymap(tracker, stop_check=lambda: True)
-

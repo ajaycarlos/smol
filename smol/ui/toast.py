@@ -230,9 +230,7 @@ class ToastWindow(QWidget):
         main_layout.addWidget(self.card)
 
         # Disable undo/copy if no output was created
-        has_output = any(
-            r.ok and r.output_path is not None for _, r in self.results
-        )
+        has_output = any(r.ok and r.output_path is not None for _, r in self.results)
         if not has_output:
             self.btn_undo.setEnabled(False)
             self.btn_copy.setEnabled(False)

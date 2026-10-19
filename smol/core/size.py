@@ -12,9 +12,7 @@ _UNIT_FACTORS = {
     "gb": 1_000_000_000,
 }
 
-_SIZE_PATTERN = re.compile(
-    r"^\s*([+-]?[0-9]+(?:\.[0-9]+)?)\s*([a-zA-Z]*)\s*$"
-)
+_SIZE_PATTERN = re.compile(r"^\s*([+-]?[0-9]+(?:\.[0-9]+)?)\s*([a-zA-Z]*)\s*$")
 
 
 def parse_size(val: str | float) -> int:

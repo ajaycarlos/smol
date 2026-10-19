@@ -168,7 +168,7 @@ def _lossy_quality_search_and_downscale(
             cur_w = max(min_dim_eff, round(orig_w * current_scale))
             cur_h = max(min_dim_eff, round(orig_h * current_scale))
             effective_scale = cur_w / orig_w
-            is_floor = (min(cur_w, cur_h) <= min_dim_eff)
+            is_floor = min(cur_w, cur_h) <= min_dim_eff
 
         resized_img = img.resize((cur_w, cur_h), resampling)
         floor_data = encode(resized_img, quality_floor)
@@ -288,14 +288,12 @@ def shrink_image(
     strip_metadata = bool(opts.get("strip_metadata", True))
     keep_format = bool(opts.get("keep_format", True))
     allow_convert = bool(opts.get("allow_convert", False))
-    force_reencode = bool(
-        opts.get("force_reencode", False) or opts.get("force", False)
-    )
+    force_reencode = bool(opts.get("force_reencode", False) or opts.get("force", False))
     dry_run = bool(opts.get("dry_run", False))
     out_dir = opts.get("out_dir")
-    step_callback: Callable[[float, int], None] | None = (
-        opts.get("step_callback") or opts.get("progress_callback")
-    )
+    step_callback: Callable[[float, int], None] | None = opts.get(
+        "step_callback"
+    ) or opts.get("progress_callback")
     max_pixels = int(
         opts.get(
             "max_pixels",
@@ -496,7 +494,7 @@ def shrink_image(
                         cur_w = max(min_dim_eff, round(orig_w * current_scale))
                         cur_h = max(min_dim_eff, round(orig_h * current_scale))
                         effective_scale = cur_w / orig_w
-                        is_floor = (min(cur_w, cur_h) <= min_dim_eff)
+                        is_floor = min(cur_w, cur_h) <= min_dim_eff
 
                     resized = img.resize((cur_w, cur_h), resampling)
                     d64 = encode_png_counted(resized, 64)
@@ -654,10 +652,7 @@ def shrink_image(
         with Image.open(io.BytesIO(best_data)) as check_im:
             check_im.verify()
         with Image.open(io.BytesIO(best_data)) as check_im:
-            if (
-                check_im.size != (final_w, final_h)
-                or check_im.format != target_format
-            ):
+            if check_im.size != (final_w, final_h) or check_im.format != target_format:
                 return Result(
                     ok=False,
                     original_bytes=original_bytes,

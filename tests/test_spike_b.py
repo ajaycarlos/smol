@@ -27,9 +27,7 @@ def test_get_screen_centre():
 
 
 def test_cursor_fallback_info():
-    coords, msg = get_cursor_fallback(
-        width=1920, height=1080, session_type="wayland"
-    )
+    coords, msg = get_cursor_fallback(width=1920, height=1080, session_type="wayland")
     assert coords == (960, 540)
     assert "fallback" in msg.lower()
     assert "wayland" in msg.lower()
@@ -165,5 +163,3 @@ def test_run_x11_drag_listener_stop_check():
         drag_tracker=tracker,
         stop_check=lambda: True,
     )
-
-

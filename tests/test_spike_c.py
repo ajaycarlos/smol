@@ -128,10 +128,12 @@ def test_overlay_drop_event_triggers_callback(qapp):
     window = DropOverlayWindow(size=300, on_drop=on_drop_cb)
 
     mime_data = QMimeData()
-    mime_data.setUrls([
-        QUrl.fromLocalFile("/home/user/pic1.png"),
-        QUrl.fromLocalFile("/home/user/pic2.jpg"),
-    ])
+    mime_data.setUrls(
+        [
+            QUrl.fromLocalFile("/home/user/pic1.png"),
+            QUrl.fromLocalFile("/home/user/pic2.jpg"),
+        ]
+    )
 
     event = QDropEvent(
         QPointF(150.0, 150.0),
@@ -209,4 +211,3 @@ def test_run_spike_c_automated(qapp, capsys):
     assert "Variant 1 (visible BEFORE drag): PASS" in captured
     assert "Variant 2 (appears DURING drag):  PASS" in captured
     assert "Blocks file manager: NO" in captured
-

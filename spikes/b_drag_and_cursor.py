@@ -112,9 +112,7 @@ class DragTracker:
             self.is_dragging = False
             self.drag_origin = None
 
-    def on_pointer_update(
-        self, x: int, y: int, button1_down: bool
-    ) -> str | None:
+    def on_pointer_update(self, x: int, y: int, button1_down: bool) -> str | None:
         """Update pointer coordinates and button1 state.
 
         Returns 'DRAG_START x=<n> y=<n>' if a new drag is initiated while a

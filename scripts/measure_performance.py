@@ -115,8 +115,8 @@ def measure_donut_latencies() -> dict[str, float]:
         paint_cold_time = time.perf_counter()
 
     results["cold_summon_to_first_pixel_ms"] = (
-        (paint_cold_time - t_summon_cold) * 1000.0
-    )
+        paint_cold_time - t_summon_cold
+    ) * 1000.0
     results["cold_total_time_ms"] = (paint_cold_time - t_init_start) * 1000.0
 
     w_cold.hide()
@@ -157,8 +157,8 @@ def measure_donut_latencies() -> dict[str, float]:
         paint_prebuilt_time = time.perf_counter()
 
     results["prebuilt_first_use_to_pixel_ms"] = (
-        (paint_prebuilt_time - t_first_use_start) * 1000.0
-    )
+        paint_prebuilt_time - t_first_use_start
+    ) * 1000.0
 
     w_prebuilt.hide()
     app.processEvents()
@@ -187,6 +187,7 @@ def measure_donut_latencies() -> dict[str, float]:
                 if not painted_warm:
                     painted_warm = True
                     paint_warm_time = time.perf_counter()
+
             return on_paint
 
         w_warm.paintEvent = make_paint_handler()

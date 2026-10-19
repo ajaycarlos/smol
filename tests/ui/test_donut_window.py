@@ -593,6 +593,7 @@ def test_donut_render_all_visual_states(qapp, samples_dir, tmp_path):
 
     # 2. Hover state with prediction
     from smol.ui.prediction import Prediction
+
     win_hover = DonutWindow([samples_dir / "portrait.jpg"])
     win_hover._hovered_idx = 2
     win_hover._current_prediction = Prediction(

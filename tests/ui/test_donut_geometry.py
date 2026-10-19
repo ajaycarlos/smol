@@ -46,19 +46,13 @@ def test_invalid_parameters():
 
     # negative gap
     with pytest.raises(ValueError, match="gap_angle"):
-        DonutGeometry(
-            n_segments=4, inner_radius=50, outer_radius=100, gap_angle=-1.0
-        )
+        DonutGeometry(n_segments=4, inner_radius=50, outer_radius=100, gap_angle=-1.0)
 
     # gap >= 360 / N
     with pytest.raises(ValueError, match="gap_angle"):
-        DonutGeometry(
-            n_segments=4, inner_radius=50, outer_radius=100, gap_angle=90.0
-        )
+        DonutGeometry(n_segments=4, inner_radius=50, outer_radius=100, gap_angle=90.0)
     with pytest.raises(ValueError, match="gap_angle"):
-        DonutGeometry(
-            n_segments=4, inner_radius=50, outer_radius=100, gap_angle=95.0
-        )
+        DonutGeometry(n_segments=4, inner_radius=50, outer_radius=100, gap_angle=95.0)
 
 
 @pytest.mark.parametrize("n", range(1, 13))

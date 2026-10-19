@@ -91,7 +91,9 @@ def test_parse_drop_uris_filters_nonexistent(tmp_path: Path) -> None:
     fake_file = tmp_path / "nonexistent.jpg"
 
     mime = QMimeData()
-    mime.setText(f"{real_file.as_uri()}\n{fake_file.as_uri()}\nhttp://example.com/test\n")
+    mime.setText(
+        f"{real_file.as_uri()}\n{fake_file.as_uri()}\nhttp://example.com/test\n"
+    )
 
     parsed = parse_drop_uris(mime)
     assert len(parsed) == 1

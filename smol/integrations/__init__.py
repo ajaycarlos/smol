@@ -33,4 +33,3 @@ __all__ = [
     "get_autostart_dir",
     "get_integrator",
 ]
-

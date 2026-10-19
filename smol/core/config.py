@@ -45,19 +45,22 @@ def get_config_path(override_path: Path | str | None = None) -> Path:
 
 def get_daemon_config(config_path: Path | str | None = None) -> dict[str, Any]:
     """Load daemon configuration with defaults for trigger_key and sizes."""
-    cfg = load_config(config_path)
-    result = dict(DEFAULT_DAEMON_CONFIG)
-    if "trigger_key" in cfg and isinstance(cfg["trigger_key"], str):
-        result["trigger_key"] = cfg["trigger_key"]
-    if "sizes" in cfg and isinstance(cfg["sizes"], list):
-        parsed_sizes = [int(s) for s in cfg["sizes"] if isinstance(s, (int, float))]
-        if parsed_sizes:
-            result["sizes"] = parsed_sizes
-    if "custom_sizes" in cfg and isinstance(cfg["custom_sizes"], list):
-        result["custom_sizes"] = cfg["custom_sizes"]
-    if "reduce_motion" in cfg and isinstance(cfg["reduce_motion"], bool):
-        result["reduce_motion"] = cfg["reduce_motion"]
-    return result
+    from smol.config import load_config as _load_config
+
+    cfg = _load_config(config_path)
+    return {
+        "trigger_key": cfg.trigger_key,
+        "sizes": list(cfg.sizes),
+        "custom_sizes": list(cfg.custom_sizes),
+        "reduce_motion": cfg.reduce_motion,
+        "output_mode": cfg.output_mode,
+        "output_folder": cfg.output_folder,
+        "keep_format": cfg.keep_format,
+        "allow_convert": cfg.allow_convert,
+        "strip_metadata": cfg.strip_metadata,
+        "min_side": cfg.min_side,
+        "autostart": cfg.autostart,
+    }
 
 
 def load_config(config_path: Path | str | None = None) -> dict[str, Any]:
@@ -76,9 +79,8 @@ def load_config(config_path: Path | str | None = None) -> dict[str, Any]:
                 return dict(DEFAULT_CONFIG)
             if "custom_sizes" not in data or not isinstance(data["custom_sizes"], list):
                 data["custom_sizes"] = []
-            if (
-                "reduce_motion" not in data
-                or not isinstance(data["reduce_motion"], bool)
+            if "reduce_motion" not in data or not isinstance(
+                data["reduce_motion"], bool
             ):
                 data["reduce_motion"] = False
             return data
@@ -147,14 +149,13 @@ def get_custom_sizes(config_path: Path | str | None = None) -> list[int]:
 
 def get_reduce_motion(config_path: Path | str | None = None) -> bool:
     """Retrieve reduce_motion setting from config (defaults to False)."""
-    config = load_config(config_path)
-    val = config.get("reduce_motion", False)
-    return bool(val)
+    from smol.config import load_config as _load_config
+
+    cfg = _load_config(config_path)
+    return bool(cfg.reduce_motion)
 
 
-def set_reduce_motion(
-    enabled: bool, config_path: Path | str | None = None
-) -> None:
+def set_reduce_motion(enabled: bool, config_path: Path | str | None = None) -> None:
     """Update reduce_motion setting in config."""
     config = load_config(config_path)
     config["reduce_motion"] = bool(enabled)

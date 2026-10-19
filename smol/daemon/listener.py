@@ -56,7 +56,6 @@ def ensure_ungrab() -> None:
             d.close()
 
 
-
 # Register ungrab on process exit
 atexit.register(ensure_ungrab)
 
@@ -129,8 +128,16 @@ class KeyHoldTracker:
             )
         if self.target_key == "Right Ctrl":
             return "Control_R" in self.raw_keys_down
+        if self.target_key in ("Ctrl", "Control"):
+            return any(k in self.raw_keys_down for k in ("Control_L", "Control_R"))
+        if self.target_key in ("Alt", "Alt_L"):
+            return any(k in self.raw_keys_down for k in ("Alt_L", "Alt_R"))
+        if self.target_key in ("Shift", "Shift_L"):
+            return any(k in self.raw_keys_down for k in ("Shift_L", "Shift_R"))
 
-        return self.target_key in self.pressed_at
+        return (
+            self.target_key in self.pressed_at or self.target_key in self.raw_keys_down
+        )
 
     def on_raw_key_down(
         self, raw_key: str, timestamp: float | None = None
@@ -177,9 +184,7 @@ class KeyHoldTracker:
 
         return events
 
-    def on_raw_key_up(
-        self, raw_key: str, timestamp: float | None = None
-    ) -> list[str]:
+    def on_raw_key_up(self, raw_key: str, timestamp: float | None = None) -> list[str]:
         """Update tracker with a raw key release event and return triggered events."""
         now = time.perf_counter() if timestamp is None else timestamp
         if raw_key not in self.raw_keys_down:
@@ -514,4 +519,3 @@ class X11EventListener(QThread):
             ensure_ungrab()
             with contextlib.suppress(Exception):
                 d.close()
-

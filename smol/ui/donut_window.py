@@ -17,6 +17,7 @@ import time
 import urllib.parse
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import (
     Property,
@@ -77,15 +78,21 @@ DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
 def build_segment_config(
     config_path: Path | str | None = None,
 ) -> list[tuple[str, int | None]]:
-    """Build list of segment tuples: default sizes, up to 3 custom sizes, and Custom…"""
+    """Build list of segment tuples from config: sizes, custom sizes, and Custom…"""
+    from smol.config import load_config
+
+    cfg = load_config(config_path)
+    sizes = cfg.sizes or [
+        20_000,
+        50_000,
+        100_000,
+        200_000,
+        500_000,
+        1_000_000,
+        2_000_000,
+    ]
     base: list[tuple[str, int | None]] = [
-        ("20 KB", 20_000),
-        ("50 KB", 50_000),
-        ("100 KB", 100_000),
-        ("200 KB", 200_000),
-        ("500 KB", 500_000),
-        ("1 MB", 1_000_000),
-        ("2 MB", 2_000_000),
+        (format_size(sz, spaced=True), sz) for sz in sizes
     ]
     base_bytes = {b for _, b in base if b is not None}
     custom_sizes = get_custom_sizes(config_path)
@@ -630,9 +637,8 @@ class DonutWindow(QWidget):
         idx = self.geometry_calc.segment_at(dx, dy)
         if idx is not None:
             return idx
-        if (
-            self._hovered_idx is not None
-            and 0 <= self._hovered_idx < len(self.segments)
+        if self._hovered_idx is not None and 0 <= self._hovered_idx < len(
+            self.segments
         ):
             seg = self.segments[self._hovered_idx]
             if seg.hover_scale > 1.0:
@@ -670,9 +676,7 @@ class DonutWindow(QWidget):
         self._hovered_idx = new_idx
         for idx, seg in enumerate(self.segments):
             target_val = 1.0 if (idx == new_idx and seg.enabled) else 0.0
-            anim_active = (
-                seg._hover_anim is not None and seg._hover_anim.state()
-            )
+            anim_active = seg._hover_anim is not None and seg._hover_anim.state()
             if seg.hover_progress != target_val or anim_active:
                 if self.reduce_motion:
                     seg.hover_progress = target_val
@@ -702,10 +706,12 @@ class DonutWindow(QWidget):
         anim.setEndValue(target_val)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         if target_val <= 0.0:
+
             def on_fade_out_finished() -> None:
                 if self.prediction_opacity <= 0.0:
                     self._fading_prediction = None
                     self.update()
+
             anim.finished.connect(on_fade_out_finished)
         self._prediction_anim = anim
         anim.start()
@@ -1016,9 +1022,7 @@ class DonutWindow(QWidget):
     ) -> None:
         """Start shrinking or enqueue if a job is currently working."""
         path_list = (
-            [Path(f) for f in files]
-            if files is not None
-            else list(self.file_paths)
+            [Path(f) for f in files] if files is not None else list(self.file_paths)
         )
         if not path_list:
             return
@@ -1084,9 +1088,21 @@ class DonutWindow(QWidget):
         self._start_drop_animation()
         self.shrink_started.emit(target_bytes)
 
+        from smol.config import load_config
+
+        cfg = load_config(self.config_path)
+        options: dict[str, Any] = {
+            "strip_metadata": cfg.strip_metadata,
+            "allow_convert": cfg.allow_convert,
+            "min_dim": cfg.min_side,
+        }
+        if cfg.output_mode == "fixed folder" and cfg.output_folder:
+            options["out_dir"] = cfg.output_folder
+
         worker = ShrinkWorker(
             files=self.file_paths,
             target_bytes=target_bytes,
+            options=options,
             parent=None,
         )
         self._shrink_worker = worker
@@ -1121,7 +1137,13 @@ class DonutWindow(QWidget):
             if not p.is_file():
                 continue
             if p.suffix.lower() in (
-                ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".avif"
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp",
+                ".heic",
+                ".heif",
+                ".avif",
             ):
                 return p
         return self.file_paths[0] if self.file_paths else None
@@ -1151,9 +1173,7 @@ class DonutWindow(QWidget):
         shrunk_items = [
             (p, r) for p, r in results if r.ok and r.output_path is not None
         ]
-        small_items = [
-            (p, r) for p, r in results if r.ok and r.output_path is None
-        ]
+        small_items = [(p, r) for p, r in results if r.ok and r.output_path is None]
         skipped_items = [
             (p, r)
             for p, r in results
@@ -1238,9 +1258,7 @@ class DonutWindow(QWidget):
 
         self.update()
 
-    def _start_completion_sequence(
-        self, results: list[tuple[Path, Result]]
-    ) -> None:
+    def _start_completion_sequence(self, results: list[tuple[Path, Result]]) -> None:
         """Execute ring snap shut -> soft checkmark burst (~600 ms)
         -> toast slide in.
         """
@@ -1258,9 +1276,7 @@ class DonutWindow(QWidget):
         ):
             self._anim_checkmark_burst.stop()
 
-        self._anim_checkmark_burst = QPropertyAnimation(
-            self, b"checkmark_burst", self
-        )
+        self._anim_checkmark_burst = QPropertyAnimation(self, b"checkmark_burst", self)
         self._anim_checkmark_burst.setDuration(600)
         self._anim_checkmark_burst.setStartValue(0.0)
         self._anim_checkmark_burst.setEndValue(1.0)
@@ -1270,9 +1286,7 @@ class DonutWindow(QWidget):
         )
         self._anim_checkmark_burst.start()
 
-    def _show_completion_toast(
-        self, results: list[tuple[Path, Result]]
-    ) -> None:
+    def _show_completion_toast(self, results: list[tuple[Path, Result]]) -> None:
         """Summon completion toast near cursor/corner and hide donut window."""
         if self.state != "success":
             return
@@ -2020,7 +2034,6 @@ class DonutWindow(QWidget):
                 )
             else:
                 self._retry_rect = None
-
 
         else:
             # Idle state: balanced thumbnail, filename, and size / prediction

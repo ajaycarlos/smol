@@ -199,12 +199,24 @@ def shrink(argv: list[str]) -> int:
         print("Error: --min-side must be a positive integer", file=sys.stderr)
         return 2
 
+    from smol.config import load_config
+
+    cfg = load_config()
+
+    out_dir = args.out_dir
+    if out_dir is None and cfg.output_mode == "fixed folder" and cfg.output_folder:
+        out_dir = cfg.output_folder
+
+    strip_meta = False if args.keep_metadata else cfg.strip_metadata
+    allow_conv = True if args.allow_convert else cfg.allow_convert
+    min_dim = args.min_side if args.min_side != 200 else cfg.min_side
+
     options = {
-        "strip_metadata": not args.keep_metadata,
-        "allow_convert": args.allow_convert,
-        "min_dim": args.min_side,
+        "strip_metadata": strip_meta,
+        "allow_convert": allow_conv,
+        "min_dim": min_dim,
         "dry_run": args.dry_run,
-        "out_dir": args.out_dir,
+        "out_dir": out_dir,
     }
 
     results = []
@@ -410,7 +422,6 @@ def integrate(argv: list[str]) -> int:
     return 0
 
 
-
 def _get_demo_photo() -> Path:
     """Return a path to a sample photo for demo mode, creating one if needed."""
     # 1. Check repo tests/samples/portrait.jpg
@@ -569,6 +580,41 @@ def daemon(argv: list[str]) -> int:
     return 2
 
 
+def settings(argv: list[str]) -> int:
+    """Handle `smol settings [--config PATH]` subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="smol settings",
+        description="Open the smol graphical settings window",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to custom config.toml file",
+    )
+
+    if "--help" in argv or "-h" in argv:
+        parser.print_help()
+        return 0
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    from PySide6.QtWidgets import QApplication
+
+    from smol.ui.settings_window import SettingsWindow
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv[:1])
+
+    window = SettingsWindow(config_path=args.config)
+    window.show()
+    return app.exec()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -603,9 +649,18 @@ def main(argv: list[str] | None = None) -> int:
         return donut(argv[1:])
     if argv[0] == "daemon":
         return daemon(argv[1:])
+    if argv[0] == "settings":
+        return settings(argv[1:])
 
     # Handle unknown commands gracefully
-    if argv and argv[0] not in ("shrink", "donut", "daemon", "integrate", "doctor"):
+    if argv and argv[0] not in (
+        "shrink",
+        "donut",
+        "daemon",
+        "integrate",
+        "doctor",
+        "settings",
+    ):
         print(f"Unknown command: {argv[0]}", file=sys.stderr)
         parser.print_help()
         return 2

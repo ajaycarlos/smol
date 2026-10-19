@@ -77,9 +77,7 @@ def test_toast_formatting_multi_file(qapp, tmp_path: Path) -> None:
     src2.write_bytes(b"2" * 2_400_000)
     out2.write_bytes(b"2" * 220_000)
 
-    r1 = Result(
-        ok=True, output_path=out1, original_bytes=1_000_000, final_bytes=90_000
-    )
+    r1 = Result(ok=True, output_path=out1, original_bytes=1_000_000, final_bytes=90_000)
     r2 = Result(
         ok=True, output_path=out2, original_bytes=2_400_000, final_bytes=220_000
     )
@@ -140,6 +138,7 @@ def test_toast_auto_hide_and_hover_pause(qapp, tmp_path: Path) -> None:
 
         # Simulate mouse leave -> timer restarts at 6000 ms
         from PySide6.QtCore import QEvent
+
         leave_ev = QEvent(QEvent.Type.Leave)
         toast.leaveEvent(leave_ev)
         assert toast._is_hovered is False

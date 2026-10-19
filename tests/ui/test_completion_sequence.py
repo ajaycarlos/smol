@@ -61,8 +61,7 @@ def test_completion_sequence_ring_snap_and_checkmark_burst(
         assert win._anim_checkmark_burst is not None
         assert win._anim_checkmark_burst.duration() == 600
         assert (
-            win._anim_checkmark_burst.easingCurve().type()
-            == QEasingCurve.Type.OutCubic
+            win._anim_checkmark_burst.easingCurve().type() == QEasingCurve.Type.OutCubic
         )
 
         # 4. Step animation through burst
@@ -113,8 +112,7 @@ def test_completion_reduce_motion_instant(
 def test_failure_amber_ring_and_use_smallest_possible_button(
     qapp, samples_dir: Path, tmp_path: Path
 ) -> None:
-    """Failure displays amber ring, honest message, and 'Use smallest possible' button.
-    """
+    """Failure displays amber ring and 'Use smallest possible' button."""
     noise = tmp_path / "noise_cannot_shrink.jpg"
     shutil.copy(samples_dir / "noise_cannot_shrink.jpg", noise)
 

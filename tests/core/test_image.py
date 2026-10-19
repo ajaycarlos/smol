@@ -103,9 +103,7 @@ def test_shrink_image_already_small(samples_dir: Path, tmp_path: Path) -> None:
     assert len(list(tmp_path.iterdir())) == 1
 
 
-def test_shrink_image_downscale_success(
-    samples_dir: Path, tmp_path: Path
-) -> None:
+def test_shrink_image_downscale_success(samples_dir: Path, tmp_path: Path) -> None:
     src_sample = samples_dir / "portrait.jpg"
     src_copy = tmp_path / "portrait_downscale.jpg"
     content = src_sample.read_bytes()
@@ -285,9 +283,7 @@ def test_shrink_image_exif_rotation_baked_into_pixels(
         assert out_exif.get(ExifTags.Base.Orientation) != 6
 
 
-def test_shrink_image_cmyk_converted_to_srgb(
-    samples_dir: Path, tmp_path: Path
-) -> None:
+def test_shrink_image_cmyk_converted_to_srgb(samples_dir: Path, tmp_path: Path) -> None:
     src_sample = samples_dir / "cmyk.jpg"
     src_copy = tmp_path / "cmyk_test.jpg"
     src_copy.write_bytes(src_sample.read_bytes())
@@ -302,9 +298,7 @@ def test_shrink_image_cmyk_converted_to_srgb(
         assert out_img.mode == "RGB"
 
 
-def test_shrink_image_grayscale_handled(
-    samples_dir: Path, tmp_path: Path
-) -> None:
+def test_shrink_image_grayscale_handled(samples_dir: Path, tmp_path: Path) -> None:
     src_sample = samples_dir / "grayscale.jpg"
     src_copy = tmp_path / "gray_test.jpg"
     src_copy.write_bytes(src_sample.read_bytes())
@@ -395,9 +389,7 @@ def test_shrink_image_decompression_bomb_guard(tmp_path: Path) -> None:
     _create_compressible_jpeg(src_file, 400, 500, seed=88)
 
     # Set max_pixels limit below image total pixels (e.g. 50,000)
-    result = shrink_image(
-        src_file, target_bytes=20_000, options={"max_pixels": 50_000}
-    )
+    result = shrink_image(src_file, target_bytes=20_000, options={"max_pixels": 50_000})
     assert result.ok is False
     assert result.output_path is None
     assert result.error is not None
@@ -565,9 +557,7 @@ def test_shrink_image_screenshot_png_reaches_100kb(
         assert out_img.format == "PNG"
 
 
-def test_shrink_image_forty_mp_reaches_100kb(
-    samples_dir: Path, tmp_path: Path
-) -> None:
+def test_shrink_image_forty_mp_reaches_100kb(samples_dir: Path, tmp_path: Path) -> None:
     src_sample = samples_dir / "forty_mp.jpg"
     src_copy = tmp_path / "forty_mp.jpg"
     src_copy.write_bytes(src_sample.read_bytes())
@@ -713,7 +703,3 @@ def test_shrink_image_downscale_searches_quality_in_range(tmp_path: Path) -> Non
     assert 60 <= result.quality <= 90
     assert result.final_bytes <= target_bytes
     assert result.final_bytes >= target_bytes * 0.90
-
-
-
-

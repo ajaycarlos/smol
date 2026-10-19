@@ -148,9 +148,7 @@ class KeyHoldTracker:
 
         return events
 
-    def on_raw_key_up(
-        self, raw_key: str, timestamp: float | None = None
-    ) -> list[str]:
+    def on_raw_key_up(self, raw_key: str, timestamp: float | None = None) -> list[str]:
         """Update tracker with a raw key release event and return triggered messages."""
         if raw_key not in self.raw_keys_down:
             return []
@@ -260,17 +258,19 @@ def run_x11_xrecord(
     ctx = d_ctrl.record_create_context(
         0,
         [record.AllClients],
-        [{
-            "core_requests": (0, 0),
-            "core_replies": (0, 0),
-            "ext_requests": (0, 0, 0, 0),
-            "ext_replies": (0, 0, 0, 0),
-            "delivered_events": (0, 0),
-            "device_events": (X.KeyPress, X.KeyRelease),
-            "errors": (0, 0),
-            "client_started": False,
-            "client_died": False,
-        }],
+        [
+            {
+                "core_requests": (0, 0),
+                "core_replies": (0, 0),
+                "ext_requests": (0, 0, 0, 0),
+                "ext_replies": (0, 0, 0, 0),
+                "delivered_events": (0, 0),
+                "device_events": (X.KeyPress, X.KeyRelease),
+                "errors": (0, 0),
+                "client_started": False,
+                "client_died": False,
+            }
+        ],
     )
 
     def process_reply(reply: rq.ReplyRequest) -> None:

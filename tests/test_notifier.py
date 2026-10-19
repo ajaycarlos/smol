@@ -70,10 +70,12 @@ def test_format_notification_batch_summary():
     assert body != "1 file shrunk"
 
     # All failed
-    summary, body, urgency = format_notification([
-        (Path("a.jpg"), fail_res),
-        (Path("b.jpg"), fail_res),
-    ])
+    summary, body, urgency = format_notification(
+        [
+            (Path("a.jpg"), fail_res),
+            (Path("b.jpg"), fail_res),
+        ]
+    )
     assert body == "2 files failed"
     assert urgency == "critical"
 

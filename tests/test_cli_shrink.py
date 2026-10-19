@@ -54,9 +54,7 @@ def test_shrink_bad_usage_invalid_min_side(
 ) -> None:
     """Invalid `--min-side` value (<= 0) exits with code 2."""
     portrait = samples_dir / "portrait.jpg"
-    code = smol.cli.main(
-        ["shrink", str(portrait), "--max", "100KB", "--min-side", "0"]
-    )
+    code = smol.cli.main(["shrink", str(portrait), "--max", "100KB", "--min-side", "0"])
     assert code == 2
     captured = capsys.readouterr()
     assert "min-side" in captured.err.lower() or "error" in captured.err.lower()
@@ -152,8 +150,7 @@ def test_shrink_impossible_target(
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert (
-        "Smallest I can make this is" in combined
-        or "try a larger target" in combined
+        "Smallest I can make this is" in combined or "try a larger target" in combined
     )
 
     # Check JSON output on impossible target
@@ -194,9 +191,7 @@ def test_shrink_keep_metadata(
     src = tmp_path / "exif_rotated.jpg"
     shutil.copy2(samples_dir / "exif_rotated.jpg", src)
 
-    code = smol.cli.main(
-        ["shrink", str(src), "--max", "8KB", "--keep-metadata"]
-    )
+    code = smol.cli.main(["shrink", str(src), "--max", "8KB", "--keep-metadata"])
     assert code == 0
 
     out_files = list(tmp_path.glob("exif_rotated_8KB*.jpg"))

@@ -156,4 +156,3 @@ def test_forty_mp_jpeg(samples_dir: Path):
         assert img.format == "JPEG"
         assert img.size == (7300, 5500)
         assert img.size[0] * img.size[1] > 40_000_000
-

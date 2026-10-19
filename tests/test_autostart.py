@@ -154,4 +154,3 @@ def test_cli_integrate_autostart(tmp_path: Path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "uninstalled" in captured.out.lower() or "removed" in captured.out.lower()
     assert not (autostart_dir / "smol.desktop").exists()
-

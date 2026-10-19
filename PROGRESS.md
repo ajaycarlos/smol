@@ -248,11 +248,23 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Added unit test suite in `tests/test_config.py` (8 tests).
   - VERIFY: all 309 tests pass; `uv run ruff check .` clean.
 
+- Implement `smol settings` PySide6 window and CLI subcommand (Milestone M6):
+  - Created `SettingsWindow` in `smol/ui/settings_window.py` with dark sapphire liquid glass styling, responsive `QScrollArea`, and Esc key dismissal.
+  - Trigger-key capture box: live key event recording with modifier combinations, preset shortcuts (`Super`, `Ctrl+Alt`, `Right Alt`, `Right Ctrl`), and warning badges for conflicts with file-manager shortcuts (e.g. `Ctrl` copy conflict, `Shift` move conflict, `Alt` window movement).
+  - Target sizes list editor: add custom size dialog with `parse_size` validation, remove, and reorder (Up/Down) with live byte formatting.
+  - Output rules: radio selection between original file directory and fixed destination folder with interactive folder picker (`QFileDialog`).
+  - Options & behavior toggles: keep format, allow convert (lossy fallback), strip metadata && GPS tags, reduce motion (instant transitions), and start at login (synced with `AutostartIntegrator`).
+  - Save button with validation, config persistence via `save_config`, autostart installation sync, and status feedback banner.
+  - Wired `smol settings [--config PATH]` into CLI (`smol/cli.py`).
+  - Captured screenshots with layout verification: verified radio button circular indicators and ampersand mnemonic escaping.
+  - Added test suites in `tests/ui/test_settings_window.py` (7 tests) and `tests/test_cli_settings.py` (2 tests), bringing test suite to 318 passed tests.
+  - VERIFY: Changed trigger key (`Ctrl+Alt`) and sizes (`[50 KB, 75 KB, 100 KB, 200 KB]`), saved, restarted daemon, verified new values took effect across daemon startup logs, DonutWindow segments, and CLI commands.
+
 ## Current milestone
-M6 — Settings window (Config foundation complete).
+M7 — PDF engine (PLAN.md Section 7.2).
 
 ## Next
-- M6 — Settings UI window.
+- M7 — PDF engine: shrink scanned/vector PDF files using Ghostscript (`gs`) and `qpdf` down to target bytes while preserving readability.
 
 
 ## Decisions

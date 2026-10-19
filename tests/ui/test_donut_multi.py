@@ -108,9 +108,7 @@ def test_mixed_types_skips_unsupported_with_message(qapp, samples_dir, tmp_path)
     window.close()
 
 
-def test_already_small_files_inform_and_do_not_recompress(
-    qapp, samples_dir, tmp_path
-):
+def test_already_small_files_inform_and_do_not_recompress(qapp, samples_dir, tmp_path):
     """Files already <= target_bytes are untouched and inform the user."""
     small_jpg = tmp_path / "small.jpg"
     shutil.copy(samples_dir / "already_small.jpg", small_jpg)  # ~30 KB
