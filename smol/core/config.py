@@ -16,11 +16,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "custom_sizes": [],
 }
 
+DEFAULT_DAEMON_CONFIG: dict[str, Any] = {
+    "trigger_key": "Super",
+    "sizes": [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000],
+    "custom_sizes": [],
+}
+
 
 def get_config_path(override_path: Path | str | None = None) -> Path:
     """Return the absolute path to the smol configuration file."""
     if override_path is not None:
         return Path(override_path)
+
+    env_config = os.environ.get("SMOL_CONFIG_PATH")
+    if env_config:
+        return Path(env_config)
 
     xdg_config = os.environ.get("XDG_CONFIG_HOME")
     if xdg_config:
@@ -29,6 +39,21 @@ def get_config_path(override_path: Path | str | None = None) -> Path:
         base = Path.home() / ".config"
 
     return base / "smol" / "config.toml"
+
+
+def get_daemon_config(config_path: Path | str | None = None) -> dict[str, Any]:
+    """Load daemon configuration with defaults for trigger_key and sizes."""
+    cfg = load_config(config_path)
+    result = dict(DEFAULT_DAEMON_CONFIG)
+    if "trigger_key" in cfg and isinstance(cfg["trigger_key"], str):
+        result["trigger_key"] = cfg["trigger_key"]
+    if "sizes" in cfg and isinstance(cfg["sizes"], list):
+        parsed_sizes = [int(s) for s in cfg["sizes"] if isinstance(s, (int, float))]
+        if parsed_sizes:
+            result["sizes"] = parsed_sizes
+    if "custom_sizes" in cfg and isinstance(cfg["custom_sizes"], list):
+        result["custom_sizes"] = cfg["custom_sizes"]
+    return result
 
 
 def load_config(config_path: Path | str | None = None) -> dict[str, Any]:

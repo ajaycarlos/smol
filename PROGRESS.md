@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M3 — Donut UI, standalone (Complete). M4 — Hold-key daemon summoning integration (Next).
+M4 — Hold-key daemon service & summoning integration (In progress).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -172,9 +172,17 @@ M3 — Donut UI, standalone (Complete). M4 — Hold-key daemon summoning integra
     5. Compact display (800×600) adaptation & boundary clamping: added `adapt_compact_size()` scaling to 340×340 on screens <=720px height with 8px boundary margins, maintaining comfortable touch/click hit targets without dominating small screens.
   - Added regression test suite in `tests/ui/test_donut_window.py` covering compact scaling, screen clamping, and visual state rendering.
   - VERIFY: Screenshots show visible improvement across all 5 states on both light and dark wallpapers; all 229 tests pass; `uv run ruff check .` clean. Tagged `v0.3.0`.
+- Implement smol daemon lifecycle management (`smol daemon start|stop|status|run`):
+  - Created `smol.daemon.service` with single-instance lock file (`fcntl.flock`), PID file tracking in `~/.local/state/smol/daemon.pid`, and automatic detection/cleanup of stale PID files.
+  - Configured rotating logging to `~/.local/state/smol/daemon.log` using `RotatingFileHandler` (1 MB max, 3 backups) logging startup details (PID, trigger key, sizes), signals, and shutdowns.
+  - Handled clean shutdown on SIGTERM and SIGINT with lock release and state cleanup.
+  - Extended `smol.core.config` with `get_daemon_config()` loading `trigger_key` (default `"Super"`) and `sizes` (default 20 KB to 2 MB) with fallback defaults if missing, plus support for `SMOL_CONFIG_PATH` and `SMOL_STATE_DIR`.
+  - Added `daemon` subcommand to `smol/cli.py` supporting `start`, `stop`, `status`, and foreground `run`.
+  - Added test suite in `tests/test_daemon.py` (7 tests) covering single instance lock contention, status detection, background start/stop lifecycle, clean SIGTERM shutdown, logging rotation, and CLI argument handling.
+  - VERIFY: `smol daemon start` twice reports already running; `status` and `stop` operate cleanly; all 236 tests pass; `uv run ruff check .` clean.
 
 ## Next
-- Milestone M4: Hold-key daemon summoning integration (Path A: X11 full Filee-like experience).
+- Milestone M4: Hold-key and drag monitoring integration into daemon (X11 python-xlib key hold detection and XQueryPointer cursor overlay summoning).
 
 ## Decisions
 - 2026-10-18: Choose Path A (full Filee-like experience) for Linux X11/Cinnamon desktop based on M0 spike benchmarks (<4 ms overlay latency, XQueryPointer real-time coordinates, python-xlib key monitoring).

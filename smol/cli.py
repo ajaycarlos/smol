@@ -390,6 +390,61 @@ def donut(argv: list[str]) -> int:
     return 0
 
 
+def daemon(argv: list[str]) -> int:
+    """Handle `smol daemon start|stop|status|run` subcommand."""
+    parser = argparse.ArgumentParser(
+        prog="smol daemon",
+        description="Manage the background smol daemon service",
+    )
+    parser.add_argument(
+        "action",
+        choices=["start", "stop", "status", "run"],
+        help="Daemon action: start, stop, status, or run",
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=str,
+        default=None,
+        help="State directory for PID and log files",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to smol config.toml",
+    )
+
+    if "--help" in argv or "-h" in argv or not argv:
+        parser.print_help()
+        return 0
+
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 2
+
+    from smol.daemon.service import DaemonService
+
+    service = DaemonService(state_dir=args.state_dir, config_path=args.config)
+
+    if args.action == "start":
+        return service.start()
+    if args.action == "stop":
+        return service.stop()
+    if args.action == "status":
+        running, pid = service.status()
+        if running:
+            print(f"smol daemon is running (PID {pid}).")
+            return 0
+        else:
+            print("smol daemon is not running.")
+            return 1
+    if args.action == "run":
+        return service.run()
+
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -422,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
         return integrate(argv[1:])
     if argv[0] == "donut":
         return donut(argv[1:])
+    if argv[0] == "daemon":
+        return daemon(argv[1:])
 
     # Handle unknown commands gracefully
     if argv and argv[0] not in ("shrink", "donut", "daemon", "integrate", "doctor"):
