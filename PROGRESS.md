@@ -390,11 +390,11 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
   - Settings window: Added Ladder editor (max 7), Favourites editor (max 12), and Donut Ring Mode switch ("Classic ring" vs "Smart ring") with full validation.
   - Result Provenance: Added `size_source` field (`"estimate"` | `"predicted"` | `"verified"`) in `Result` and exposed in `smol shrink --json`.
 - Spike D: DragEnter / DragMove / Drop Data Inspection spike (`spikes/d_dragenter_data.py`):
-  - Created PySide6 always-on-top window measuring MIME formats, `hasUrls()`, URL extraction, and inspection latency in milliseconds across `dragEnterEvent`, `dragMoveEvent`, and `dropEvent`.
-  - Tested 6 cases: (1) one file from Nemo, (2) several files, (3) a folder, (4) file from inside archive manager, (5) mounted network/phone location, (6) image dragged from web browser.
-  - Results: For all 6 cases, URLs are available immediately at ENTER (<0.04 ms) and at MOVE (<0.01 ms), NOT only at drop. Sub-millisecond URL inspection allows instant early validation before drop.
-  - Added unit test suite in `tests/test_spike_d.py` (7 tests).
-  - VERIFY: `uv run python spikes/d_dragenter_data.py` verified all 6 cases; all 398 tests pass; ruff clean.
+  - Created interactive PySide6 always-on-top window (~320×320) awaiting real drag-and-drop operations from external applications.
+  - Appends raw per-event log entries to `spikes/d_log.txt`: perf_counter timestamp, event type (ENTER, MOVE rate-limited to 100 ms, LEAVE, DROP), `source_is_none` (external app), action, MIME formats, `hasUrls()`, raw URLs (`toString()` and `toLocalFile()`), and URL read duration measured with `time.perf_counter()`.
+  - Number keys 1 to 6 tag the next drag session; Esc closes the window and prints diagnostic summary table; unrun cases print `NOT TESTED`.
+  - Added unit test suite in `tests/test_spike_d.py` (6 tests).
+  - Clean linting (`uv run ruff check .`) and passing tests.
 
 ## Next
 - Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).

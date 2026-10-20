@@ -3,20 +3,20 @@ import tempfile
 
 import pytest
 
-# Ensure Qt can run in headless test environments if needed
+# Ensure Qt can run in headless test environments
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeyEvent
 from PySide6.QtWidgets import QApplication
 
 from spikes.d_dragenter_data import (
-    DragEnterDataWindow,
-    DragInspectionRecord,
-    DragSessionTracker,
-    build_mime_data_for_case,
-    format_case_report,
-    run_all_cases,
+    CASE_DESCRIPTIONS,
+    DragDataInspectorWindow,
+    DragEventRecord,
+    SessionSummary,
+    format_log_line,
+    format_summary_table,
 )
 
 
@@ -28,159 +28,127 @@ def qapp():
     return app
 
 
-def test_window_initialization(qapp):
-    window = DragEnterDataWindow()
+def test_window_properties(qapp):
+    window = DragDataInspectorWindow()
+    assert window.width() == 320
+    assert window.height() == 320
     assert window.acceptDrops() is True
     flags = window.windowFlags()
     assert bool(flags & Qt.WindowType.WindowStaysOnTopHint) is True
-    assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating) is True
 
 
-def test_drag_enter_event_logging(qapp):
-    window = DragEnterDataWindow()
-    mime = QMimeData()
-    test_url = QUrl.fromLocalFile("/path/to/test.jpg")
-    mime.setUrls([test_url])
+def test_key_press_case_tagging(qapp):
+    window = DragDataInspectorWindow()
+    assert window.current_case_tag is None
 
-    event = QDragEnterEvent(
-        QPointF(50.0, 50.0),
-        Qt.DropAction.CopyAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
+    # Press key '1'
+    event1 = QKeyEvent(
+        QKeyEvent.Type.KeyPress, Qt.Key.Key_1, Qt.KeyboardModifier.NoModifier, "1"
     )
-    window.dragEnterEvent(event)
+    window.keyPressEvent(event1)
+    assert window.current_case_tag == 1
 
-    assert event.isAccepted() is True
-    records = window.session_tracker.current_records
-    assert len(records) >= 1
-    rec = records[0]
-    assert rec.event_type == "ENTER"
-    assert rec.has_urls is True
-    assert "/path/to/test.jpg" in rec.urls[0]
-    assert rec.read_time_ms >= 0.0
-    assert "text/uri-list" in rec.formats
-
-
-def test_drag_move_event_logging(qapp):
-    window = DragEnterDataWindow()
-    mime = QMimeData()
-    mime.setUrls([QUrl.fromLocalFile("/path/to/doc.pdf")])
-
-    event = QDragMoveEvent(
-        QPointF(60.0, 60.0),
-        Qt.DropAction.CopyAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
+    # Press key '6'
+    event6 = QKeyEvent(
+        QKeyEvent.Type.KeyPress, Qt.Key.Key_6, Qt.KeyboardModifier.NoModifier, "6"
     )
-    window.dragMoveEvent(event)
-
-    assert event.isAccepted() is True
-    records = window.session_tracker.current_records
-    assert len(records) >= 1
-    rec = records[-1]
-    assert rec.event_type == "MOVE"
-    assert rec.has_urls is True
-    assert "/path/to/doc.pdf" in rec.urls[0]
+    window.keyPressEvent(event6)
+    assert window.current_case_tag == 6
 
 
-def test_drop_event_logging(qapp):
-    window = DragEnterDataWindow()
-    mime = QMimeData()
-    mime.setUrls([QUrl.fromLocalFile("/path/to/pic.png")])
-
-    event = QDropEvent(
-        QPointF(50.0, 50.0),
-        Qt.DropAction.CopyAction,
-        mime,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
+def test_format_log_line():
+    record = DragEventRecord(
+        timestamp=12345.678901,
+        event_type="ENTER",
+        source_is_none=True,
+        proposed_action="CopyAction",
+        formats=["text/uri-list"],
+        has_urls=True,
+        urls=[
+            {"toString": "file:///path/to/test.jpg", "toLocalFile": "/path/to/test.jpg"}
+        ],
+        read_time_ms=0.045,
+        case_tag=1,
     )
-    window.dropEvent(event)
-
-    assert event.isAccepted() is True
-    records = window.session_tracker.current_records
-    assert len(records) >= 1
-    rec = records[-1]
-    assert rec.event_type == "DROP"
-    assert rec.has_urls is True
-    assert "/path/to/pic.png" in rec.urls[0]
+    line = format_log_line(record)
+    assert "ENTER" in line
+    assert "source_is_none=True" in line
+    assert "read_time_ms=0.045" in line
+    assert "file:///path/to/test.jpg" in line
+    assert "\n" not in line.strip()  # Must be a single line
 
 
-def test_case_report_formatting():
-    tracker = DragSessionTracker()
-    tracker.add_record(
-        DragInspectionRecord(
-            event_type="ENTER",
-            has_urls=True,
-            formats=["text/uri-list"],
-            urls=["file:///tmp/sample.jpg"],
-            read_time_ms=0.120,
+def test_summary_table_all_not_tested():
+    sessions: dict[int, SessionSummary] = {}
+    table = format_summary_table(sessions)
+    for case_num in range(1, 7):
+        assert f"Case {case_num}:" in table
+        assert "NOT TESTED" in table
+    assert "Case 1: One file from Nemo" in table
+    assert "Case 6: An image dragged from a web browser" in table
+
+
+def test_summary_table_with_tested_and_untested_cases():
+    sessions: dict[int, SessionSummary] = {
+        1: SessionSummary(
+            case_num=1,
+            enter_has_urls=True,
+            enter_read_ms=0.082,
+            move_has_urls=True,
+            move_read_ms=0.021,
+            drop_has_urls=True,
+            drop_read_ms=0.035,
+            formats=["text/uri-list", "x-special/nemo-clipboard"],
+            urls=["/home/user/photo.jpg"],
         )
-    )
-    tracker.add_record(
-        DragInspectionRecord(
-            event_type="MOVE",
-            has_urls=True,
-            formats=["text/uri-list"],
-            urls=["file:///tmp/sample.jpg"],
-            read_time_ms=0.080,
-        )
-    )
-    tracker.add_record(
-        DragInspectionRecord(
-            event_type="DROP",
-            has_urls=True,
-            formats=["text/uri-list"],
-            urls=["file:///tmp/sample.jpg"],
-            read_time_ms=0.150,
-        )
-    )
+    }
+    table = format_summary_table(sessions)
 
-    report = format_case_report("Case 1: One file from Nemo", tracker)
-    assert "Case 1: One file from Nemo" in report
-    assert "URLs available at ENTER? YES (0.120 ms)" in report
-    assert "URLs available at MOVE? YES (0.080 ms)" in report
-    assert "URLs available only at DROP? NO" in report
+    # Case 1 should have real data
+    assert "Case 1: One file from Nemo" in table
+    assert "URLs at ENTER?     YES (0.082 ms)" in table
+    assert "URLs at MOVE?      YES (0.021 ms)" in table
+    assert "URLs only at DROP? NO" in table
+
+    # Cases 2 to 6 must be NOT TESTED
+    for c in range(2, 7):
+        assert f"Case {c}: {CASE_DESCRIPTIONS[c]} -> NOT TESTED" in table
 
 
-def test_build_mime_data_for_cases():
+def test_interactive_window_logging(qapp):
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Case 1
-        mime1, _desc1 = build_mime_data_for_case(1, tmpdir)
-        assert mime1.hasUrls() is True
-        assert len(mime1.urls()) == 1
+        log_path = os.path.join(tmpdir, "d_log.txt")
+        window = DragDataInspectorWindow(log_path=log_path)
+        window.current_case_tag = 1
 
-        # Case 2
-        mime2, _desc2 = build_mime_data_for_case(2, tmpdir)
-        assert mime2.hasUrls() is True
-        assert len(mime2.urls()) > 1
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile("/home/user/sample.png")])
 
-        # Case 3
-        mime3, _desc3 = build_mime_data_for_case(3, tmpdir)
-        assert mime3.hasUrls() is True
-        assert os.path.isdir(mime3.urls()[0].toLocalFile())
+        enter_event = QDragEnterEvent(
+            QPointF(50.0, 50.0),
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        window.dragEnterEvent(enter_event)
 
-        # Case 4 (archive file)
-        _mime4, desc4 = build_mime_data_for_case(4, tmpdir)
-        assert "archive" in desc4.lower()
+        drop_event = QDropEvent(
+            QPointF(50.0, 50.0),
+            Qt.DropAction.CopyAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        window.dropEvent(drop_event)
 
-        # Case 5 (network/phone or gvfs mock)
-        _mime5, desc5 = build_mime_data_for_case(5, tmpdir)
-        assert "network" in desc5.lower() or "mounted" in desc5.lower()
+        assert os.path.isfile(log_path)
+        with open(log_path, encoding="utf-8") as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
 
-        # Case 6 (browser image)
-        _mime6, desc6 = build_mime_data_for_case(6, tmpdir)
-        assert "browser" in desc6.lower()
-
-
-def test_run_all_cases_simulation(qapp):
-    results = run_all_cases(interactive=False)
-    assert len(results) == 6
-    for case_title, tracker in results.values():
-        report = format_case_report(case_title, tracker)
-        assert "URLs available at ENTER?" in report
-        assert "URLs available at MOVE?" in report
-        assert "URLs available only at DROP?" in report
-        assert "ms" in report
+        assert len(lines) == 2
+        assert "ENTER" in lines[0]
+        assert "DROP" in lines[1]
+        assert "/home/user/sample.png" in lines[0]
+        assert 1 in window.sessions
+        assert window.sessions[1].enter_has_urls is True
