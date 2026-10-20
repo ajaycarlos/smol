@@ -3,13 +3,13 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-M4 — Hold-key daemon service & summoning integration (In progress).
+v1.0 Sequence — Q0 (Platform seam & Wayland guard).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
 - File manager: nemo (installed)
 - Python: 3.12.3
-- Optional & required tools: uv, ffmpeg, ffprobe, gs (Ghostscript), qpdf, git, notify-send
+- Optional & required tools: uv, gs (Ghostscript), qpdf, git, notify-send (ffmpeg/ffprobe optional, deferred)
 - Chosen path from SPIKE.md: Path A (X11 full Filee-like experience)
 - Default trigger key: Super (primary default; Ctrl+Alt secondary; plain Ctrl avoided due to file manager copy collision)
 
@@ -370,9 +370,6 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Updated `PLAN.md`: marked M8/M9 (video, audio) as deferred (see `BACKLOG.md`); ffmpeg no longer required; Section 9 updated to Path A only for v1.0 (X11-only hold-key + drag, right-click & CLI on any session, Paths B/C future work); Section 5 updated with classic fixed ring default, opt-in smart ring, max 8 segments including Custom, and favourites/recents in Custom popup; M10 replaced with Windows 10/11 = v2.0 (see `BACKLOG.md`); added v1.0 sequence (Q0, A1 to A5, freeze, P10.1 security audit, packaging AppImage + .deb, docs, CI, QA, release).
   - Updated `AGENTS.md`: file locations come from `smol/platform` (`platformdirs`), never hard-coded; added safety rule for inspecting dragged files (regular files only, never open FIFOs or devices, never decode); updated external tools removing ffmpeg requirement.
   - Updated `PROGRESS.md`: synced Current milestone, Next, and Decisions with `DECISIONS.md`.
-
-## Current milestone
-v1.0 Sequence — Q0 (Platform seam & Wayland guard).
 
 ## Next
 - Q0: Platform seam & Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
