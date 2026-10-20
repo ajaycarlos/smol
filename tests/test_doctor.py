@@ -13,7 +13,7 @@ def test_doctor_all_present(
 ) -> None:
     """When dependencies and env vars are present, all items show ✓."""
     monkeypatch.setattr(sys, "version_info", (3, 12, 3, "final", 0))
-    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "GNOME")
 
     # Mock shutil.which to find any binary

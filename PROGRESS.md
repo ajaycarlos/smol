@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-v1.0 Sequence — Q0 (Platform seam & Wayland guard).
+v1.0 Sequence — A5 (Settings UI alignment).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -421,9 +421,14 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
     * Handles archive drops (e.g. Archive Manager / File Roller where URLs are not available at drag-enter) cleanly by entering neutral "Checking..." state and classifying at drop time when URLs arrive.
   - Comprehensive unit test suite in `tests/core/test_classify.py` (8 tests) and `tests/ui/test_donut_classify.py` (6 tests).
   - End-to-end verification script `scripts/verify_predrop_classify.py` covering all 5 core cases. All 411 tests pass; ruff clean.
+- Implement Wayland session guard for hold-key daemon and doctor warning (v1.0 Sequence Q0):
+  - Added session guard in `smol/daemon/service.py` (`check_wayland_session`) and `smol/cli.py` refusing `smol daemon start` and `smol daemon run` when `XDG_SESSION_TYPE=wayland` (even if `DISPLAY` is set under XWayland) with exit code 3 and message: "smol's hold-key donut needs an X11 session. Right-click integration and the smol CLI still work. Log out and choose an X11/Xorg session at the login screen, or use right-click."
+  - Updated `smol doctor` to emit a warning row (`! XDG_SESSION_TYPE (wayland: hold-key donut needs X11; CLI and right-click work)`) on Wayland.
+  - Preserved autostart entry, right-click integration, and CLI tools on all sessions.
+  - Unit tests in `tests/daemon/test_wayland_guard.py` (5 tests) and updated `tests/test_doctor.py`.
+  - VERIFY: With `XDG_SESSION_TYPE=wayland`, `uv run smol daemon start` prints message and exits with code 3; daemon starts and stops cleanly on real X11 session.
 
 ## Next
-- Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
 - A5 (Settings UI alignment), feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
 
 ## Decisions

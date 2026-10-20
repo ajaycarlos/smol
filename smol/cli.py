@@ -119,7 +119,13 @@ def doctor() -> int:
     # 3. Environment variables
     session_type = os.environ.get("XDG_SESSION_TYPE")
     if session_type:
-        lines.append(f"✓ XDG_SESSION_TYPE ({session_type})")
+        if session_type.strip().lower() == "wayland":
+            lines.append(
+                f"! XDG_SESSION_TYPE ({session_type}: hold-key donut needs X11; "
+                "CLI and right-click work)"
+            )
+        else:
+            lines.append(f"✓ XDG_SESSION_TYPE ({session_type})")
     else:
         lines.append("✗ XDG_SESSION_TYPE  (set $XDG_SESSION_TYPE, e.g. wayland or x11)")
 
@@ -591,6 +597,13 @@ def daemon(argv: list[str]) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
+
+    if args.action in ("start", "run"):
+        from smol.daemon.service import WAYLAND_REFUSAL_MESSAGE, check_wayland_session
+
+        if check_wayland_session():
+            print(WAYLAND_REFUSAL_MESSAGE, file=sys.stderr)
+            return 3
 
     from smol.daemon.service import DaemonService
 

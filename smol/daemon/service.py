@@ -32,6 +32,31 @@ from smol.daemon.listener import (
 )
 from smol.ui.donut_window import DonutWindow
 
+WAYLAND_REFUSAL_MESSAGE = (
+    "smol's hold-key donut needs an X11 session. Right-click integration and the smol "
+    "CLI still work. Log out and choose an X11/Xorg session at the login screen, or "
+    "use right-click."
+)
+
+
+def check_wayland_session(env: dict[str, str] | None = None) -> bool:
+    """Detect if running under a Wayland session.
+
+    Refuses even when DISPLAY exists (XWayland) as global key capture is
+    not reliable there.
+    """
+    if env is None:
+        session_type = os.environ.get("XDG_SESSION_TYPE", "")
+        wayland_disp = os.environ.get("WAYLAND_DISPLAY", "")
+    else:
+        session_type = env.get("XDG_SESSION_TYPE", "")
+        wayland_disp = env.get("WAYLAND_DISPLAY", "")
+
+    if session_type.strip().lower() == "wayland":
+        return True
+    return bool(not session_type.strip() and wayland_disp.strip())
+
+
 
 def get_state_dir(override_dir: Path | str | None = None) -> Path:
     """Return the absolute path to the smol state directory."""
@@ -280,6 +305,10 @@ class DaemonService:
 
     def run(self, console_log: bool = False) -> int:
         """Run daemon in foreground until SIGTERM or SIGINT is received."""
+        if check_wayland_session():
+            print(WAYLAND_REFUSAL_MESSAGE, file=sys.stderr)
+            return 3
+
         logger = self.setup_logging(console=console_log)
 
         if not self.acquire_lock():
@@ -449,8 +478,12 @@ class DaemonService:
     def start(self) -> int:
         """Start daemon in background.
 
-        Returns 0 on success, 1 on failure or already running.
+        Returns 0 on success, 1 on failure or already running, 3 on Wayland.
         """
+        if check_wayland_session():
+            print(WAYLAND_REFUSAL_MESSAGE, file=sys.stderr)
+            return 3
+
         running, pid = self.status()
         if running:
             print(f"smol daemon is already running (PID {pid}).")
