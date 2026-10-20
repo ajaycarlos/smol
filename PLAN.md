@@ -10,7 +10,8 @@ Core story: a 1 MB passport photo must go under 100 KB for a website upload form
 ## 2. Honest scope
 "Any file to any size" is impossible: already-compressed data has a floor. So:
 - v1 = **images** (JPEG, PNG, WebP, HEIC) done really well, and **PDF**.
-- Video and audio deferred to v1.1.
+- Video and audio deferred, see `BACKLOG.md`.
+- `ffmpeg` is no longer a required tool.
 - When a target is impossible, say so and offer the smallest honest size. Never fake success.
 
 ## 3. Principles
@@ -32,6 +33,9 @@ Core story: a 1 MB passport photo must go under 100 KB for a website upload form
 Failure state: ring turns amber, message says what the smallest achievable size is and offers it.
 
 ## 5. Donut spec
+- The donut default is the **classic fixed ring**; the smart ring is an opt-in setting.
+- Maximum 8 segments including Custom.
+- Favourites and recents live in the Custom popup.
 - Default segments (all editable): 20 KB, 50 KB, 100 KB, 200 KB, 500 KB, 1 MB, 2 MB, **Custom...**
 - Custom opens a tiny input at the cursor (number + KB/MB). Remember the last 3 custom values as segments.
 - Optional presets that add pixel limits: e.g. "Photo <= 50 KB, 200x230". (v2)
@@ -69,12 +73,8 @@ Ghostscript ladder, stop at the first (best quality) rung that fits:
 image DPI 200 -> 150 -> 120 -> 96 -> 72 -> 60, JPEG quality about 80 -> 50. Then `qpdf` object-stream optimisation.
 Scanned PDFs shrink well. Text-only PDFs usually do not; report that honestly.
 
-### 7.3 Video and audio (M8) (deferred to v1.1)
-- Read duration with `ffprobe`.
-- Total bits = target * 8 * 0.92 (safety margin). Audio 64 kbps. Video bitrate = remainder.
-- If bits-per-pixel is too low, step the resolution down (1080 -> 720 -> 480 -> 360).
-- Two-pass x264. Verify. If over target, cut bitrate 5% and retry (max 3).
-- Audio only: bitrate from the same formula, floor 24 kbps, else fail.
+### 7.3 Video and audio (M8 / M9) (deferred, see BACKLOG.md)
+Video and audio compression are deferred to post-v1.0 (see `BACKLOG.md`). `ffmpeg` is no longer a required tool for v1.0.
 
 ### 7.4 Later
 Office docs (recompress images in `word/media`), ZIP re-pack, GIF, SVG minify.
@@ -89,14 +89,14 @@ Office docs (recompress images in `word/media`), ZIP re-pack, GIF, SVG minify.
 ```
 The CLI and right-click scripts reuse the same engine, so the product is useful before the donut exists.
 
-## 9. Linux desktop reality (M0 spike verdict: Path A chosen)
+## 9. Linux desktop reality (v1.0: X11-only for hold-key donut)
 How a key hold, a drag in another app, and an overlay under the cursor work depends on the **display server**:
-- **X11 (Target Environment - VERIFIED)**: Everything is possible and tested on this machine (Linux / Cinnamon / Nemo). Spikes A, B, and C confirmed **Path A (full Filee-like experience)**:
+- **v1.0 ships Path A only (X11 hold-key + drag)**: Confirmed on X11 (Linux / Cinnamon / Nemo).
   - Global key hold detection via `python-xlib` (`Super` primary, `Ctrl+Alt` secondary; plain `Ctrl` avoided because `Ctrl`+drag triggers "Copy" in Linux file managers).
   - Global cursor tracking via `XQueryPointer` on root window.
   - PySide6 frameless translucent overlay summons under the cursor in 0.86–3.16 ms (< 150 ms target) without breaking the active file manager DnD grab (`WA_ShowWithoutActivating`).
-- **Wayland (KDE, Sway, Hyprland)**: Path B (layer-shell overlays and portals) remains a future option.
-- **Wayland (GNOME)**: Path C (holding key opens a centred drop-palette donut) remains the architectural fallback where global cursor position is isolated.
+- **Right-click and the CLI work on any session** (X11 or Wayland).
+- **Paths B and C are future work** (Wayland layer-shell portals and centred drop-palette).
 
 Milestone 0 is complete with full evidence documented in `SPIKE.md`.
 
@@ -104,58 +104,68 @@ Milestone 0 is complete with full evidence documented in `SPIKE.md`.
 Trigger key (capture box) · size list editor · output folder (next to original / fixed folder) · naming pattern · keep format · strip metadata · minimum dimension · reduce motion · theme · start at login · language.
 
 ## 11. Milestones
-Each milestone ends with a "Done when" check the owner can run.
 
-**M0 — Feasibility spike** (do first)
+**M0 — Feasibility spike** (do first - COMPLETE)
 - Write `spikes/a_key_hold.py`, `b_drag_and_cursor.py`, `c_overlay_drop.py`, and `SPIKE.md` with results.
-- A: detect a key being held and released globally.
-- B: detect a mouse drag in another app and read the cursor position.
-- C: show a transparent frameless always-on-top window under the cursor during a drag and receive the dropped file path (`text/uri-list`).
 - Done when: `SPIKE.md` states for this machine which of Path A (X11 full), B (Wayland + layer-shell), C (centred palette) is viable, with evidence.
 
-**M1 — Image engine + CLI**
+**M1 — Image engine + CLI** (COMPLETE)
 - `smol shrink photo.jpg --max 100KB` (also `--json`, `--dry-run`, `--keep-format/--allow-convert`).
-- Done when: output is between 90,000 and 100,000 bytes for the standard test photo, original unchanged, `pytest` green on 15+ samples (portrait, landscape, screenshot PNG, HEIC, tiny, already-small, 40 MP, grayscale, alpha PNG, CMYK JPEG, EXIF-rotated, impossible target).
+- Done when: output is between 90,000 and 100,000 bytes for the standard test photo, original unchanged, `pytest` green on 15+ samples.
 
-**M2 — Right-click integration + notifications** (first usable release)
-- Submenu "Shrink to..." in the owner's file manager (Nautilus scripts / Nemo actions / Dolphin service menu / Thunar custom action) plus desktop notification.
+**M2 — Right-click integration + notifications** (COMPLETE)
+- Submenu "Shrink to..." in the owner's file manager plus desktop notification.
 - Done when: right-click a photo, choose 100 KB, new file appears, notification shows before/after size.
 
-**M3 — Donut UI, standalone**
+**M3 — Donut UI, standalone** (COMPLETE)
 - `smol donut --files a.jpg b.jpg` opens the donut at the cursor, with hover, prediction, drop, custom size, Esc to cancel.
 - Done when: matches section 4–5 for one and many files, engine runs off the UI thread.
 
-**M4 — Hold-key daemon** (Path A: X11 full Filee-like)
-- Background service (systemd user unit or autostart) using `python-xlib` for global key hold detection and `XQueryPointer` for cursor tracking.
-- Trigger key: `Super` (primary default) or `Ctrl+Alt` (secondary), preventing file manager `Ctrl`+drag copy conflict.
-- Hold trigger key + drag file out of Nemo/file manager summons PySide6 translucent donut under the cursor (`WA_ShowWithoutActivating`).
-- Done when: hold key, drag a file out of the file manager, donut appears in under 150 ms (spikes verified ~1–3 ms), drop produces the shrunk file; idle CPU about 0%.
+**M4 — Hold-key daemon** (Path A: X11 full Filee-like - COMPLETE)
+- Background service using `python-xlib` for global key hold detection and `XQueryPointer` for cursor tracking.
+- Done when: hold key, drag a file out of the file manager, donut appears in under 150 ms, drop produces the shrunk file; idle CPU about 0%.
 
-**M5 — Animation and polish**
-- Section 6 in full, toast with Open folder / Undo / Copy path, sounds optional.
-- Done when: owner records a 15-second screen capture they are happy to post.
+**M5 — Animation and polish** (COMPLETE)
+- Section 6 in full, toast with Open folder / Undo / Copy path.
 
-**M6 — Settings window.** Section 10.
+**M6 — Settings window** (COMPLETE)
+- Section 10 in full.
 
-**M7 — PDF engine.** Section 7.2. Done when a 5 MB scanned PDF goes under 1 MB and still reads clearly.
+**M7 — PDF engine** (COMPLETE)
+- Section 7.2. Done when a 5 MB scanned PDF goes under 1 MB and still reads clearly.
 
-**M8 — Video/audio engine (deferred to v1.1)**
-Section 7.3. Done when a 30 s phone clip lands at 90–100% of an 8 MB target.
+**M8 — Video engine (deferred, see BACKLOG.md)**
+`ffmpeg` is no longer a required tool.
 
-**M9 — Packaging and release (deferred to v1.1)**
-- AppImage and/or `.deb`, README with a demo GIF, LICENSE (MIT), CI that runs tests, GitHub release.
-- Do not bundle ffmpeg/Ghostscript (licensing); detect and guide.
+**M9 — Audio engine (deferred, see BACKLOG.md)**
+`ffmpeg` is no longer a required tool.
 
-**M10 — Windows/macOS ports** (only after Linux is solid; Qt UI and engine carry over, the key/drag hooks do not).
+**M10 — Windows 10/11 = v2.0, see BACKLOG.md**
+
+### v1.0 sequence
+Before the v1.0 release, execute the following sequence:
+1. **Q0** — Platform seam & Wayland guard (fail fast with helpful message on Wayland hold-key attempt)
+2. **A1** — Classic ring default (classic fixed ring default, max 8 segments including Custom, favourites & recents in Custom popup)
+3. **A2** — Drag inspection safety (regular files only, header sniffing max 32B, no FIFOs/devices, no decode)
+4. **A3** — Suggestion engine & config schema v1
+5. **A4** — Result provenance (`estimate`, `predicted`, `verified`)
+6. **A5** — Settings UI alignment
+7. **Freeze** — Feature freeze for v1.0
+8. **P10.1 security audit** — Comprehensive security and hardening audit
+9. **Packaging (AppImage + .deb)** — AppImage and `.deb` packaging via PyInstaller, plus `uv tool install`
+10. **Docs** — Documentation, man pages, user guide
+11. **CI** — Continuous integration test & build pipeline
+12. **QA** — Final manual QA checklist and regression test pass
+13. **Release** — v1.0 release
 
 ## 12. Risks
 | Risk | Mitigation |
 |---|---|
-| Wayland blocks cursor/drag access | M0 spike first; fallback palette; right-click path always works |
+| Wayland blocks cursor/drag access | v1.0 ships Path A only (X11-only); Wayland guard informs user; right-click path and CLI work on any session |
 | Output looks bad at tiny targets | Quality floor, dimension floor, honest failure, before/after compare later |
-| Ghostscript is AGPL, ffmpeg varies | Call as external programs, don't bundle |
+| Ghostscript is AGPL | Call as external program, don't bundle |
 | AI agents drift or break earlier work | Small tasks, tests, git commit per task, PROGRESS.md |
-| Key conflicts with file manager shortcuts | Configurable key, test candidates in M0 |
+| Key conflicts with file manager shortcuts | Configurable key (Super / Ctrl+Alt), tested in M0 |
 | Flatpak sandbox blocks global shortcuts | Ship AppImage/.deb first |
 
 ## 13. Later ideas

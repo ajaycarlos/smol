@@ -20,7 +20,7 @@ The owner does NOT write code. They run the commands you give them and report wh
 ## Fixed tech stack (do not change without asking)
 - Python 3.12, `uv` (or venv), `pytest`, `ruff`
 - Images: Pillow (+ pillow-heif). UI: PySide6 (Qt 6)
-- External tools called with `subprocess` (list arguments, never shell strings): `ffmpeg`, `ffprobe`, `gs` (Ghostscript), `qpdf`
+- External tools called with `subprocess` (list arguments, never shell strings): `gs` (Ghostscript), `qpdf` (ffmpeg is no longer a required tool for v1.0)
 - No new dependency without saying what it is, why, and its license.
 
 ## Layout
@@ -53,9 +53,10 @@ PLAN.md  PROGRESS.md  AGENTS.md  NOTICE
 
 ## Safety
 - Treat filenames as hostile: spaces, unicode, leading `-`, newlines.
+- When inspecting dragged files: regular files only, never open FIFOs or devices, never decode.
 - No network calls anywhere in the app.
 - Do not copy code from other projects without recording source and license in `NOTICE`. (Filee is MIT-licensed; study it freely, attribute anything copied.)
-- Do not bundle ffmpeg or Ghostscript. Detect them on the system and show a clear message if missing.
+- Do not bundle Ghostscript. Detect it on the system and show a clear message if missing.
 
 ## Testing
 - Every engine feature gets pytest cases on at least 10 varied sample files.
@@ -89,4 +90,4 @@ Hard rules:
 
 ## One command, many subcommands
 The only console script is `smol`: `smol shrink`, `smol donut`, `smol daemon`, `smol settings`, `smol integrate`, `smol doctor`.
-Config lives in `~/.config/smol/config.toml`; logs in `~/.local/state/smol/`.
+File locations come from `smol/platform` (`platformdirs`), never hard-coded.

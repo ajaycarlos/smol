@@ -366,14 +366,29 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Updated `PLAN.md` to mark M8 (video/audio) and M9 as deferred to v1.1.
   - Updated `README.md` to document supported formats in v1.0 as images (JPEG, PNG, WebP, HEIC, AVIF) and PDF only.
   - Re-routed active DonutWindow Esc cancellation test in `tests/ui/test_donut_window.py` to use images.
+- Synchronize project documentation with approved decisions (PLAN.md, AGENTS.md, PROGRESS.md):
+  - Updated `PLAN.md`: marked M8/M9 (video, audio) as deferred (see `BACKLOG.md`); ffmpeg no longer required; Section 9 updated to Path A only for v1.0 (X11-only hold-key + drag, right-click & CLI on any session, Paths B/C future work); Section 5 updated with classic fixed ring default, opt-in smart ring, max 8 segments including Custom, and favourites/recents in Custom popup; M10 replaced with Windows 10/11 = v2.0 (see `BACKLOG.md`); added v1.0 sequence (Q0, A1 to A5, freeze, P10.1 security audit, packaging AppImage + .deb, docs, CI, QA, release).
+  - Updated `AGENTS.md`: file locations come from `smol/platform` (`platformdirs`), never hard-coded; added safety rule for inspecting dragged files (regular files only, never open FIFOs or devices, never decode); updated external tools removing ffmpeg requirement.
+  - Updated `PROGRESS.md`: synced Current milestone, Next, and Decisions with `DECISIONS.md`.
 
 ## Current milestone
-v1.0 Cleanup & Stabilization (Image + PDF engine shipping for v1.0; video/audio deferred to v1.1).
+v1.0 Sequence — Q0 (Platform seam & Wayland guard).
 
 ## Next
-- Security pass and packaging for v1.0 release.
+- Q0: Platform seam & Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
+- A1: Classic ring default (classic fixed ring default, max 8 segments, Custom popup with favourites and recents).
+- A2 to A5, feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
 
 ## Decisions
+- 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.
+- 2026-10-20 (D-005): Video and audio deferred to BACKLOG.md; ffmpeg no longer required for v1.0.
+- 2026-10-20 (D-007): Classic fixed ring is the default. Smart ring is opt-in in Settings. Max 8 segments including Custom; favourites and recents in Custom popup.
+- 2026-10-20 (D-008): Pre-audit sequence is Q0, A1 to A5, freeze, then P10.1 security audit. Everything else waits for post-v1.0.
+- 2026-10-20 (D-010): Packaging for v1.0: AppImage and .deb from PyInstaller output, plus uv tool install. No Flatpak or Snap.
+- 2026-10-20 (D-011): Windows 10/11 only as v2.0 after a spike (see BACKLOG.md); Windows 7, 8, 8.1 rejected.
+- 2026-10-20 (D-012): Results state their source: estimate, predicted, or verified. Promise shown to users is "<= target".
+- 2026-10-20 (D-013): Inspecting dragged files before drop: regular files only, header sniffing only (max 32 bytes), never decode, never open FIFOs or devices, cap 50 files, 300 ms timeout.
+- 2026-10-20 (D-014): File-size expansion/padding and range targets deferred to v1.3+ and must be labelled in result (method).
 - 2026-10-20: Defer video and audio compression to v1.1 to ship a rock-solid, focused v1.0 release covering images (JPEG, PNG, WebP, HEIC, AVIF) and PDF only. Keep ffmpeg/ffprobe detection in smol doctor as optional tools.
 - 2026-10-20: In `smol/core/video.py` and `smol/core/audio.py`, stream ffmpeg execution via `-progress pipe:1 -nostats` in line-buffered `subprocess.Popen`, parsing `out_time_us` against media duration and emitting normalized ring progress fractions and live byte countdowns on `progress=` block completions.
 - 2026-10-20: In `smol/ui/worker.py`, maintain thread-safe registration of active child subprocesses (`_active_proc`) and immediately issue `proc.kill()` on `cancel()`, handling exit code -9 / `CancellationError` to unlink partial output files and leave zero disk leftovers.
