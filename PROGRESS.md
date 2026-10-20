@@ -373,6 +373,14 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
   - Replaced hard-coded `~/.config`, `~/.local/state`, and `~/.cache` paths across `smol.config`, `smol.daemon.service`, `smol.integrations.autostart`, `smol.integrations.manager`, and `smol.cli` to resolve through `smol.platform`.
   - Added comprehensive test suite in `tests/platform/test_platform.py` (13 tests) verifying default paths, XDG overrides, adapter stubs, migration safety, and mocked platform directory migrations.
   - VERIFY: All 361 tests pass; `uv run smol daemon status` and `uv run smol settings` work with existing user config; `grep -rn "\.config\|\.local/state" smol/` shows hard-coded paths only inside `smol/platform`.
+- Implement smol/core/suggest.py size suggestion and floor estimation engine:
+  - Created `suggest_sizes(original_bytes, floor_bytes, file_type, options)` with pure Python foundation (zero Qt dependencies, zero config imports).
+  - Mode CLASSIC (default): returns fixed ladder in ascending order, never reshuffled; flags ineligibility when size >= original_bytes ("larger than the file") or size < floor_bytes ("too small for this file (min about X)"); strictly excludes pinned and recents.
+  - Mode SMART (opt-in): filters candidate pool (pool + pinned + recents) to `floor * 1.05 <= size <= 0.9 * original`. If > max_segments (default 6) fit, selects max_segments spaced evenly on a log scale via dynamic programming, preferring anchors (100 KB, 200 KB, 500 KB, 1 MB, 2 MB) and larger values on ties. If < 3 candidates fit, generates relative rungs (0.75×, 0.5×, 0.25× rounded down to 1, 2, 2.5, or 5 × 10^k). Returns empty list ("Already small") if nothing fits.
+  - Near-duplicate deduplication within 5% across both modes, keeping the larger size. Deterministic output across calls.
+  - Created `estimate_floor(src, options)`: fast in-memory probe encode downscaled to min_dim at quality 60 for images (`source="predicted"`), and conservative heuristic for PDFs (`source="estimate"`).
+  - Comprehensive unit test suite in `tests/core/test_suggest.py` (15 tests).
+  - VERIFY: All 376 tests pass; ruff clean; verified 8-sample comparison table across 12 KB to 40 MB.
 
 ## Next
 - Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
