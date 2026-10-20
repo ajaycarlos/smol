@@ -392,9 +392,16 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
 - Spike D: DragEnter / DragMove / Drop Data Inspection spike (`spikes/d_dragenter_data.py`):
   - Created interactive PySide6 always-on-top window (~320×320) awaiting real drag-and-drop operations from external applications.
   - Appends raw per-event log entries to `spikes/d_log.txt`: perf_counter timestamp, event type (ENTER, MOVE rate-limited to 100 ms, LEAVE, DROP), `source_is_none` (external app), action, MIME formats, `hasUrls()`, raw URLs (`toString()` and `toLocalFile()`), and URL read duration measured with `time.perf_counter()`.
-  - Number keys 1 to 6 tag the next drag session; Esc closes the window and prints diagnostic summary table; unrun cases print `NOT TESTED`.
+  - Number keys 1 to 6 tag the next drag session; Esc closes the window and prints diagnostic summary table.
   - Added unit test suite in `tests/test_spike_d.py` (6 tests).
-  - Clean linting (`uv run ruff check .`) and passing tests.
+  - Empirical X11 findings verified on real drags across all 6 cases:
+    * Case 1 (1 file from Nemo): URLs available at ENTER (5.26 ms cold, 0.45 ms warm) and MOVE (0.30–0.99 ms), NOT only at DROP.
+    * Case 2 (12 files from Nemo): URLs available at ENTER (1.08 ms) and MOVE (0.33–1.10 ms), NOT only at DROP.
+    * Case 3 (folder from Nemo): URLs available at ENTER (0.34 ms) and MOVE (0.29–0.84 ms), NOT only at DROP.
+    * Case 4 (Archive Manager / File Roller): `hasUrls()` is False at ENTER, MOVE, and DROP! Formats are `XdndDirectSave0` and `XdndFileRoller0` without `text/uri-list`. Files dragged from archives require XDS protocol negotiation and cannot be read as URLs.
+    * Case 5 (Mounted phone / MTP on GVFS): URLs available at ENTER (0.31 ms) and MOVE (0.31–2.20 ms) with valid `/run/user/1000/gvfs/mtp:...` path, NOT only at DROP.
+    * Case 6 (Web browser / Chromium): URLs available at ENTER (0.36 ms) and MOVE (0.40–0.48 ms) as `data:image/jpeg;base64,...` (with `isLocalFile() == False`), NOT only at DROP.
+  - Read latency for standard URL extractions is consistently <1.5 ms (<2.5 ms max on GVFS). All 398 tests pass; ruff clean.
 
 ## Next
 - Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
