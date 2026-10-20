@@ -1,7 +1,7 @@
 """Configuration manager for smol.
 
-Handles reading and writing user configuration to ~/.config/smol/config.toml
-(or $XDG_CONFIG_HOME/smol/config.toml) with atomic writes, schema validation,
+Handles reading and writing user configuration to config.toml
+in the platform configuration directory with atomic writes, schema validation,
 and safe defaults.
 """
 
@@ -100,13 +100,9 @@ def get_config_path(override_path: Path | str | None = None) -> Path:
     if env_config:
         return Path(env_config)
 
-    xdg_config = os.environ.get("XDG_CONFIG_HOME")
-    if xdg_config:
-        base = Path(xdg_config)
-    else:
-        base = Path.home() / ".config"
+    from smol.platform import config_dir
 
-    return base / "smol" / "config.toml"
+    return config_dir("smol") / "config.toml"
 
 
 def _warn_and_fallback(key: str, value: Any, default: Any, reason: str = "") -> None:

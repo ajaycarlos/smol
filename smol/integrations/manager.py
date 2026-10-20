@@ -93,10 +93,10 @@ class NemoIntegrator:
     ) -> None:
         self.file_manager = "nemo"
         user_data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
-        user_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        from smol.platform import config_dir as get_platform_config_dir
 
         self.actions_dir = actions_dir or (user_data / "nemo/actions")
-        self.config_dir = config_dir or (user_config / "nemo")
+        self.config_dir = config_dir or get_platform_config_dir("nemo")
         self.tree_file = self.config_dir / "actions-tree.json"
         self.smol_bin = smol_bin or find_smol_binary()
         self.config_path = config_path
@@ -459,8 +459,9 @@ class ThunarIntegrator:
         config_path: Path | str | None = None,
     ) -> None:
         self.file_manager = "thunar"
-        user_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        self.uca_file = uca_file or (user_config / "Thunar/uca.xml")
+        from smol.platform import config_dir as get_platform_config_dir
+
+        self.uca_file = uca_file or (get_platform_config_dir("Thunar") / "uca.xml")
         self.smol_bin = smol_bin or find_smol_binary()
         self.config_path = config_path
         self.sizes = get_integration_sizes(self.config_path)

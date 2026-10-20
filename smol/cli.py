@@ -461,8 +461,10 @@ def _get_demo_photo() -> Path:
     if repo_sample.exists() and repo_sample.stat().st_size > 0:
         return repo_sample
 
-    # 2. Check XDG_CACHE_HOME / smol / demo_portrait.jpg
-    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "smol"
+    # 2. Check platform cache dir / demo_portrait.jpg
+    from smol.platform import cache_dir as get_cache_dir
+
+    cache_dir = get_cache_dir("smol")
     demo_file = cache_dir / "demo_portrait.jpg"
     if demo_file.exists() and demo_file.stat().st_size > 0:
         return demo_file

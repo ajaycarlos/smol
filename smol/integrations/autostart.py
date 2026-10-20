@@ -1,6 +1,5 @@
 """XDG autostart desktop entry integration for smol daemon."""
 
-import os
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -23,13 +22,10 @@ class AutostartStatus:
 
 
 def get_autostart_dir() -> Path:
-    """Return the user XDG autostart directory."""
-    xdg_config = os.environ.get("XDG_CONFIG_HOME")
-    if xdg_config:
-        base_dir = Path(xdg_config)
-    else:
-        base_dir = Path.home() / ".config"
-    return base_dir / "autostart"
+    """Return the user autostart directory."""
+    from smol.platform import get_platform
+
+    return get_platform().autostart.get_autostart_dir()
 
 
 def find_smol_binary() -> str:
@@ -46,7 +42,7 @@ def find_smol_binary() -> str:
 
 
 class AutostartIntegrator:
-    """Manages ~/.config/autostart/smol.desktop to start the smol daemon at login."""
+    """Manages autostart desktop entry to start the smol daemon at login."""
 
     def __init__(
         self,

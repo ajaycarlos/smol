@@ -366,13 +366,16 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
   - Updated `PLAN.md` to mark M8 (video/audio) and M9 as deferred to v1.1.
   - Updated `README.md` to document supported formats in v1.0 as images (JPEG, PNG, WebP, HEIC, AVIF) and PDF only.
   - Re-routed active DonutWindow Esc cancellation test in `tests/ui/test_donut_window.py` to use images.
-- Synchronize project documentation with approved decisions (PLAN.md, AGENTS.md, PROGRESS.md):
-  - Updated `PLAN.md`: marked M8/M9 (video, audio) as deferred (see `BACKLOG.md`); ffmpeg no longer required; Section 9 updated to Path A only for v1.0 (X11-only hold-key + drag, right-click & CLI on any session, Paths B/C future work); Section 5 updated with classic fixed ring default, opt-in smart ring, max 8 segments including Custom, and favourites/recents in Custom popup; M10 replaced with Windows 10/11 = v2.0 (see `BACKLOG.md`); added v1.0 sequence (Q0, A1 to A5, freeze, P10.1 security audit, packaging AppImage + .deb, docs, CI, QA, release).
-  - Updated `AGENTS.md`: file locations come from `smol/platform` (`platformdirs`), never hard-coded; added safety rule for inspecting dragged files (regular files only, never open FIFOs or devices, never decode); updated external tools removing ffmpeg requirement.
-  - Updated `PROGRESS.md`: synced Current milestone, Next, and Decisions with `DECISIONS.md`.
+- Create smol/platform/ seam and Linux adapter with platformdirs (v1.0 Sequence Q0):
+  - Created `smol.platform` seam with abstract interface (`Platform`, `KeyHoldAdapter`, `CursorPositionAdapter`, `IntegrationAdapter`, `AutostartAdapter`, `NotificationAdapter`) and `LinuxPlatform` adapter.
+  - Added `platformdirs>=4.0.0` dependency (MIT license, documented in `NOTICE` and `pyproject.toml`) for standardized cross-platform resolution of `config_dir()`, `state_dir()`, and `cache_dir()`.
+  - Implemented one-time non-destructive copy migration (`migrate_if_needed`) that copies legacy configuration/state files if target paths differ, never deleting old files, and logging migrations.
+  - Replaced hard-coded `~/.config`, `~/.local/state`, and `~/.cache` paths across `smol.config`, `smol.daemon.service`, `smol.integrations.autostart`, `smol.integrations.manager`, and `smol.cli` to resolve through `smol.platform`.
+  - Added comprehensive test suite in `tests/platform/test_platform.py` (13 tests) verifying default paths, XDG overrides, adapter stubs, migration safety, and mocked platform directory migrations.
+  - VERIFY: All 361 tests pass; `uv run smol daemon status` and `uv run smol settings` work with existing user config; `grep -rn "\.config\|\.local/state" smol/` shows hard-coded paths only inside `smol/platform`.
 
 ## Next
-- Q0: Platform seam & Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
+- Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
 - A1: Classic ring default (classic fixed ring default, max 8 segments, Custom popup with favourites and recents).
 - A2 to A5, feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
 

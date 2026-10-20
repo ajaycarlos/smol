@@ -18,3 +18,9 @@ This project incorporates dependencies and references to third-party open-source
 - Version: >= 1.0.0
 - License: MIT License
 - Purpose: Pure-Python library for writing TOML documents used to serialize user configuration files.
+
+## platformdirs
+- Project: platformdirs (https://github.com/platformdirs/platformdirs)
+- Version: >= 4.0.0
+- License: MIT License
+- Purpose: Standardized cross-platform resolution of user configuration, state, and cache directories without hard-coding platform paths.

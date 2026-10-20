@@ -2,7 +2,7 @@
 
 Manages daemon process lifecycle (start, stop, status, run),
 single-instance enforcement via file locks, rotating logs in
-~/.local/state/smol/daemon.log, and clean shutdown on SIGTERM / SIGINT.
+the platform state directory (daemon.log), and clean shutdown on SIGTERM / SIGINT.
 """
 
 from __future__ import annotations
@@ -42,13 +42,9 @@ def get_state_dir(override_dir: Path | str | None = None) -> Path:
     if env_state:
         return Path(env_state)
 
-    xdg_state = os.environ.get("XDG_STATE_HOME")
-    if xdg_state:
-        base = Path(xdg_state)
-    else:
-        base = Path.home() / ".local" / "state"
+    from smol.platform import state_dir
 
-    return base / "smol"
+    return state_dir("smol")
 
 
 def get_log_path(state_dir: Path | str | None = None) -> Path:

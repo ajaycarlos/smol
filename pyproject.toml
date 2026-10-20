@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "Pillow>=10.0.0",
     "pillow-heif>=0.15.0",
+    "platformdirs>=4.13.5",
     "PySide6-Essentials>=6.6.0",
     "python-xlib>=0.33",
     "tomli-w>=1.0.0",
