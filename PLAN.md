@@ -144,13 +144,13 @@ Trigger key (capture box) · size list editor · output folder (next to original
 
 ### v1.0 sequence
 Before the v1.0 release, execute the following sequence:
-1. **Q0** — Platform seam & Wayland guard (fail fast with helpful message on Wayland hold-key attempt)
-2. **A1** — Classic ring default (classic fixed ring default, max 8 segments including Custom, favourites & recents in Custom popup)
-3. **A2** — Drag inspection safety (regular files only, header sniffing max 32B, no FIFOs/devices, no decode)
-4. **A3** — Suggestion engine & config schema v1
-5. **A4** — Result provenance (`estimate`, `predicted`, `verified`)
-6. **A5** — Settings UI alignment
-7. **Freeze** — Feature freeze for v1.0
+1. **Q0** — Platform seam & Wayland guard (fail fast with helpful message on Wayland hold-key attempt - COMPLETE)
+2. **A1** — Classic ring default (classic fixed ring default, max 8 segments including Custom, favourites & recents in Custom popup - COMPLETE)
+3. **A2** — Drag inspection safety (regular files only, header sniffing max 32B, no FIFOs/devices, no decode - COMPLETE)
+4. **A3** — Suggestion engine & config schema v1 (COMPLETE)
+5. **A4** — Result provenance (`estimate`, `predicted`, `verified` - COMPLETE)
+6. **A5** — Settings UI alignment (COMPLETE)
+7. **Freeze** — Feature freeze for v1.0 (v0.9.0 pre-audit baseline tagged - COMPLETE)
 8. **P10.1 security audit** — Comprehensive security and hardening audit
 9. **Packaging (AppImage + .deb)** — AppImage and `.deb` packaging via PyInstaller, plus `uv tool install`
 10. **Docs** — Documentation, man pages, user guide

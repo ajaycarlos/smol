@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-v1.0 Sequence — A5 (Settings UI alignment).
+v1.0 Feature Freeze / Pre-audit baseline (v0.9.0).
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -427,9 +427,16 @@ v1.0 Sequence — A5 (Settings UI alignment).
   - Preserved autostart entry, right-click integration, and CLI tools on all sessions.
   - Unit tests in `tests/daemon/test_wayland_guard.py` (5 tests) and updated `tests/test_doctor.py`.
   - VERIFY: With `XDG_SESSION_TYPE=wayland`, `uv run smol daemon start` prints message and exits with code 3; daemon starts and stops cleanly on real X11 session.
+- Pre-audit freeze (v0.9.0 baseline):
+  - Completed and verified full test suite (416 tests passing, 0 failures, 0 skipped, 0 xfailed).
+  - Confirmed ruff linter clean with zero warnings.
+  - Completed drift check against PLAN.md, AGENTS.md, and DECISIONS.md with zero contradictions, zero TODOs/FIXMEs, and zero weakened tests.
+  - Synchronized package and CLI versions to 0.9.0 across `pyproject.toml`, `smol/cli.py`, `tests/test_basic.py`, and `uv.lock`.
+  - Updated `PLAN.md` to reflect completion of sequence Q0 through A5 and Feature Freeze.
+  - VERIFY: ruff clean, 416 tests green, `smol --version` reports 0.9.0, tagged `v0.9.0`.
 
 ## Next
-- A5 (Settings UI alignment), feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
+- P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.
