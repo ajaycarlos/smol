@@ -316,3 +316,92 @@ def test_settings_window_validation_and_save(qapp, tmp_path: Path):
         window.close()
         window.deleteLater()
         qapp.processEvents()
+
+
+def test_settings_window_ladder_editor_max_7(qapp, tmp_path):
+    """Test ladder editor limits entries to max 7 and validates correctly."""
+    cfg_file = tmp_path / "config.toml"
+    window = SettingsWindow(config_path=cfg_file)
+    try:
+        # Default ladder has 7 entries
+        assert len(window.ladder_editor.get_sizes()) == 7
+        assert window.ladder_editor.add_btn.isEnabled() is False
+
+        # Remove an entry -> now 6 entries -> Add button should be enabled
+        window.ladder_editor.list_widget.setCurrentRow(0)
+        window.ladder_editor._on_remove()
+        assert len(window.ladder_editor.get_sizes()) == 6
+        assert window.ladder_editor.add_btn.isEnabled() is True
+
+        # Validation succeeds with 6 entries
+        valid, msg = window.validate()
+        assert valid is True
+
+        # If set to more than 7 entries, validation fails
+        window.ladder_editor.set_sizes([10_000 * i for i in range(1, 9)])
+        assert len(window.ladder_editor.get_sizes()) == 8
+        valid, msg = window.validate()
+        assert valid is False
+        assert "cannot exceed 7" in msg
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()
+
+
+def test_settings_window_favourites_editor_max_12(qapp, tmp_path):
+    """Test favourites editor limits entries to max 12 and validates correctly."""
+    cfg_file = tmp_path / "config.toml"
+    window = SettingsWindow(config_path=cfg_file)
+    try:
+        assert window.favourites_editor.allow_empty is True
+        assert len(window.favourites_editor.get_sizes()) == 0
+        assert window.favourites_editor.add_btn.isEnabled() is True
+
+        # Set 12 favourites -> Add button disabled
+        twelve = [10_000 * i for i in range(1, 13)]
+        window.favourites_editor.set_sizes(twelve)
+        assert len(window.favourites_editor.get_sizes()) == 12
+        assert window.favourites_editor.add_btn.isEnabled() is False
+
+        valid, msg = window.validate()
+        assert valid is True
+
+        # Set 13 favourites -> validation fails
+        thirteen = [10_000 * i for i in range(1, 14)]
+        window.favourites_editor.set_sizes(thirteen)
+        valid, msg = window.validate()
+        assert valid is False
+        assert "cannot exceed 12" in msg
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()
+
+
+def test_settings_window_ring_mode_switch_and_persistence(qapp, tmp_path):
+    """Test ring mode toggle between Classic and Smart ring and saving."""
+    cfg_file = tmp_path / "config.toml"
+    window = SettingsWindow(config_path=cfg_file)
+    try:
+        assert window.ring_mode_widget.get_mode() == "classic"
+
+        # Switch to smart ring
+        window.ring_mode_widget.set_mode("smart")
+        assert window.ring_mode_widget.get_mode() == "smart"
+
+        # Set pinned favourites
+        window.favourites_editor.set_sizes([45_000, 90_000])
+
+        with patch("smol.ui.settings_window.AutostartIntegrator"):
+            assert window.save()
+
+        # Reload from disk and verify
+        loaded = load_config(cfg_file)
+        assert loaded.suggest.mode == "smart"
+        assert loaded.sizes.pinned == [45_000, 90_000]
+        assert len(loaded.sizes.ladder) == 7
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()

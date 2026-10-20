@@ -701,6 +701,7 @@ def shrink_image(
             quality=best_q,
             steps=steps,
             warning=conversion_warning,
+            size_source="predicted",
         )
 
     parent_dir = dest_path.parent

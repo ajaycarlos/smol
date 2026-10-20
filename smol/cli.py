@@ -272,6 +272,7 @@ def shrink(argv: list[str]) -> int:
                 "steps": res.steps,
                 "warning": res.warning,
                 "error": res.error,
+                "size_source": res.size_source,
             }
             for src_path, res in results
         ]
@@ -544,7 +545,10 @@ def donut(argv: list[str]) -> int:
         print(label, flush=True)
 
     window = DonutWindow(files=paths, on_select=on_select)
-    window.run_overlay()
+    try:
+        window.run_overlay()
+    finally:
+        window.close()
     return 0
 
 

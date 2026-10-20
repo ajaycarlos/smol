@@ -282,6 +282,7 @@ def shrink_pdf(
                 final_bytes=best_candidate_size,
                 quality=best_rung["quality"],
                 steps=step_count,
+                size_source="estimate",
             )
 
         # Compute output destination path

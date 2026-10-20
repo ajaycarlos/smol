@@ -52,7 +52,12 @@ def save_config(
 def get_daemon_config(config_path: Path | str | None = None) -> dict[str, Any]:
     """Load daemon configuration with all active settings."""
     cfg = _load_config_canonical(config_path)
-    return cfg.to_dict()
+    d = cfg.to_dict()
+    if isinstance(d.get("sizes"), dict):
+        d["sizes"] = list(cfg.sizes.ladder)
+    if "custom_sizes" not in d:
+        d["custom_sizes"] = list(cfg.sizes.recents)
+    return d
 
 
 def add_custom_size(

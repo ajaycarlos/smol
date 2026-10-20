@@ -34,7 +34,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from smol.config import SmolConfig, load_config, save_config
+from smol.config import (
+    DEFAULT_LADDER,
+    SizesConfig,
+    SmolConfig,
+    SuggestConfig,
+    load_config,
+    save_config,
+)
 from smol.core.size import format_size, parse_size
 from smol.integrations.autostart import AutostartIntegrator
 
@@ -544,9 +551,22 @@ class SizeListEditor(QWidget):
     sizes_changed = Signal()
 
     def __init__(
-        self, initial_sizes: list[int] | None = None, parent: QWidget | None = None
+        self,
+        initial_sizes: list[int] | None = None,
+        max_entries: int | None = None,
+        default_sizes: list[int] | None = None,
+        allow_empty: bool = False,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.max_entries = max_entries
+        self.default_sizes = (
+            default_sizes
+            if default_sizes is not None
+            else list(DEFAULT_LADDER)
+        )
+        self.allow_empty = allow_empty
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
@@ -585,16 +605,12 @@ class SizeListEditor(QWidget):
         btn_col.addStretch()
         layout.addLayout(btn_col)
 
-        default_sizes = initial_sizes or [
-            20_000,
-            50_000,
-            100_000,
-            200_000,
-            500_000,
-            1_000_000,
-            2_000_000,
-        ]
-        self.set_sizes(default_sizes)
+        start_sizes = (
+            initial_sizes
+            if initial_sizes is not None
+            else list(self.default_sizes)
+        )
+        self.set_sizes(start_sizes)
 
     def get_sizes(self) -> list[int]:
         sizes: list[int] = []
@@ -622,25 +638,41 @@ class SizeListEditor(QWidget):
         row = self.list_widget.currentRow()
         count = self.list_widget.count()
 
-        self.remove_btn.setEnabled(row >= 0 and count > 1)
+        if self.max_entries is not None and count >= self.max_entries:
+            self.add_btn.setEnabled(False)
+            self.add_btn.setToolTip(f"Maximum {self.max_entries} entries reached.")
+        else:
+            self.add_btn.setEnabled(True)
+            self.add_btn.setToolTip("")
+
+        min_req = 0 if self.allow_empty else 1
+        self.remove_btn.setEnabled(row >= 0 and count > min_req)
         self.up_btn.setEnabled(row > 0)
         self.down_btn.setEnabled(0 <= row < count - 1)
 
     def _on_add(self) -> None:
+        if (
+            self.max_entries is not None
+            and self.list_widget.count() >= self.max_entries
+        ):
+            return
         dialog = AddSizeDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             b = dialog.get_size_bytes()
             if b is not None:
                 self._append_size_item(b)
                 self.list_widget.setCurrentRow(self.list_widget.count() - 1)
+                self._update_button_states()
                 self.sizes_changed.emit()
 
     def _on_remove(self) -> None:
         row = self.list_widget.currentRow()
-        if row >= 0 and self.list_widget.count() > 1:
+        min_req = 0 if self.allow_empty else 1
+        if row >= 0 and self.list_widget.count() > min_req:
             self.list_widget.takeItem(row)
             new_row = min(row, self.list_widget.count() - 1)
             self.list_widget.setCurrentRow(new_row)
+            self._update_button_states()
             self.sizes_changed.emit()
 
     def _on_move_up(self) -> None:
@@ -660,10 +692,68 @@ class SizeListEditor(QWidget):
             self.sizes_changed.emit()
 
     def _on_reset(self) -> None:
-        self.set_sizes(
-            [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000]
-        )
+        self.set_sizes(list(self.default_sizes))
         self.sizes_changed.emit()
+
+
+class RingModeWidget(QWidget):
+    """Radio selection between Classic ring (fixed ladder) and Smart ring."""
+
+    mode_changed = Signal(str)
+
+    def __init__(
+        self,
+        initial_mode: str = "classic",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self.btn_group = QButtonGroup(self)
+
+        self.radio_classic = QRadioButton("Classic ring")
+        self.btn_group.addButton(self.radio_classic, 1)
+        layout.addWidget(self.radio_classic)
+
+        sub_classic = QLabel(
+            "Fixed ladder sizes in ascending order. Muscle-memory friendly; "
+            "ineligible sizes are dimmed."
+        )
+        sub_classic.setProperty("class", "optionDesc")
+        layout.addWidget(sub_classic)
+
+        self.radio_smart = QRadioButton("Smart ring")
+        self.btn_group.addButton(self.radio_smart, 2)
+        layout.addWidget(self.radio_smart)
+
+        sub_smart = QLabel(
+            "Dynamically selected target sizes tailored to the file size, "
+            "type, and estimated floor."
+        )
+        sub_smart.setProperty("class", "optionDesc")
+        layout.addWidget(sub_smart)
+
+        self.radio_classic.toggled.connect(self._on_toggled)
+
+        mode_clean = (initial_mode or "classic").strip().lower()
+        if mode_clean == "smart":
+            self.radio_smart.setChecked(True)
+        else:
+            self.radio_classic.setChecked(True)
+
+    def _on_toggled(self) -> None:
+        self.mode_changed.emit(self.get_mode())
+
+    def get_mode(self) -> str:
+        return "smart" if self.radio_smart.isChecked() else "classic"
+
+    def set_mode(self, mode: str) -> None:
+        if (mode or "").strip().lower() == "smart":
+            self.radio_smart.setChecked(True)
+        else:
+            self.radio_classic.setChecked(True)
 
 
 class OutputRulesWidget(QWidget):
@@ -909,27 +999,80 @@ class SettingsWindow(QWidget):
         key_layout.addWidget(self.key_capture)
         scroll_layout.addWidget(key_frame)
 
-        # 2. Target Sizes Section
-        sizes_frame = QFrame()
-        sizes_frame.setProperty("class", "cardFrame")
-        sizes_layout = QVBoxLayout(sizes_frame)
-        sizes_layout.setSpacing(8)
+        # 2. Ring Mode Section
+        mode_frame = QFrame()
+        mode_frame.setProperty("class", "cardFrame")
+        mode_layout = QVBoxLayout(mode_frame)
+        mode_layout.setSpacing(8)
 
-        sec_sizes_title = QLabel("Target Sizes")
-        sec_sizes_title.setProperty("class", "sectionTitle")
-        sizes_layout.addWidget(sec_sizes_title)
+        sec_mode_title = QLabel("Donut Ring Mode")
+        sec_mode_title.setProperty("class", "sectionTitle")
+        mode_layout.addWidget(sec_mode_title)
 
-        sec_sizes_sub = QLabel(
-            "Available sizes displayed in the donut ring (drag files onto segments)."
+        sec_mode_sub = QLabel(
+            "Select how target sizes are organized on the donut ring."
         )
-        sec_sizes_sub.setProperty("class", "subText")
-        sizes_layout.addWidget(sec_sizes_sub)
+        sec_mode_sub.setProperty("class", "subText")
+        mode_layout.addWidget(sec_mode_sub)
 
-        self.size_editor = SizeListEditor(self._config.sizes)
-        sizes_layout.addWidget(self.size_editor)
-        scroll_layout.addWidget(sizes_frame)
+        self.ring_mode_widget = RingModeWidget(self._config.suggest.mode)
+        mode_layout.addWidget(self.ring_mode_widget)
+        scroll_layout.addWidget(mode_frame)
 
-        # 3. Output Rules Section
+        # 3. Ladder Sizes Section (Max 7)
+        ladder_frame = QFrame()
+        ladder_frame.setProperty("class", "cardFrame")
+        ladder_layout = QVBoxLayout(ladder_frame)
+        ladder_layout.setSpacing(8)
+
+        sec_ladder_title = QLabel("Ladder Sizes (Max 7)")
+        sec_ladder_title.setProperty("class", "sectionTitle")
+        ladder_layout.addWidget(sec_ladder_title)
+
+        sec_ladder_sub = QLabel(
+            "Ladder entries displayed on the donut ring in Classic mode."
+        )
+        sec_ladder_sub.setProperty("class", "subText")
+        ladder_layout.addWidget(sec_ladder_sub)
+
+        ladder_sizes = list(self._config.sizes.ladder)
+        self.ladder_editor = SizeListEditor(
+            initial_sizes=ladder_sizes,
+            max_entries=7,
+            default_sizes=list(DEFAULT_LADDER),
+            allow_empty=False,
+        )
+        self.size_editor = self.ladder_editor  # Backwards compatibility alias
+        ladder_layout.addWidget(self.ladder_editor)
+        scroll_layout.addWidget(ladder_frame)
+
+        # 4. Favourite Sizes Section (Max 12)
+        fav_frame = QFrame()
+        fav_frame.setProperty("class", "cardFrame")
+        fav_layout = QVBoxLayout(fav_frame)
+        fav_layout.setSpacing(8)
+
+        sec_fav_title = QLabel("Favourite Sizes (Max 12)")
+        sec_fav_title.setProperty("class", "sectionTitle")
+        fav_layout.addWidget(sec_fav_title)
+
+        sec_fav_sub = QLabel(
+            "Pinned favourite sizes shown in the Custom size popup for quick selection."
+        )
+        sec_fav_sub.setProperty("class", "subText")
+        fav_layout.addWidget(sec_fav_sub)
+
+        pinned_sizes = list(self._config.sizes.pinned)
+        self.favourites_editor = SizeListEditor(
+            initial_sizes=pinned_sizes,
+            max_entries=12,
+            default_sizes=[],
+            allow_empty=True,
+        )
+        fav_layout.addWidget(self.favourites_editor)
+        scroll_layout.addWidget(fav_frame)
+
+        # 5. Output Rules Section
         out_frame = QFrame()
         out_frame.setProperty("class", "cardFrame")
         out_layout = QVBoxLayout(out_frame)
@@ -951,7 +1094,7 @@ class SettingsWindow(QWidget):
         out_layout.addWidget(self.output_rules)
         scroll_layout.addWidget(out_frame)
 
-        # 4. Toggles Section
+        # 6. Toggles Section
         toggles_frame = QFrame()
         toggles_frame.setProperty("class", "cardFrame")
         toggles_layout = QVBoxLayout(toggles_frame)
@@ -1010,17 +1153,26 @@ class SettingsWindow(QWidget):
         if not key or not key.strip():
             return False, "Trigger key cannot be empty. Please select or record a key."
 
-        # 2. Sizes
-        sizes = self.size_editor.get_sizes()
-        if not sizes:
+        # 2. Ladder Sizes
+        ladder = self.ladder_editor.get_sizes()
+        if not ladder:
             return (
                 False,
-                "Target sizes list cannot be empty. At least one size is required.",
+                "Ladder sizes cannot be empty. At least one ladder size is required.",
             )
-        if any(s <= 0 for s in sizes):
-            return False, "All target sizes must be positive byte values."
+        if len(ladder) > 7:
+            return False, "Ladder sizes cannot exceed 7 entries."
+        if any(s <= 0 for s in ladder):
+            return False, "All ladder sizes must be positive byte values."
 
-        # 3. Output rules
+        # 3. Favourite Sizes
+        pinned = self.favourites_editor.get_sizes()
+        if len(pinned) > 12:
+            return False, "Favourite sizes cannot exceed 12 entries."
+        if any(s <= 0 for s in pinned):
+            return False, "All favourite sizes must be positive byte values."
+
+        # 4. Output rules
         mode = self.output_rules.get_output_mode()
         if mode == "fixed folder":
             folder = self.output_rules.get_output_folder()
@@ -1057,14 +1209,29 @@ class SettingsWindow(QWidget):
 
         # Gather updated values
         key = self.key_capture.get_key()
-        sizes = self.size_editor.get_sizes()
+        ladder = self.ladder_editor.get_sizes()
+        pinned = self.favourites_editor.get_sizes()
+        ring_mode = self.ring_mode_widget.get_mode()
         mode = self.output_rules.get_output_mode()
         folder = self.output_rules.get_output_folder()
         toggles = self.toggles_widget.get_toggles()
 
+        sizes_cfg = SizesConfig(
+            ladder=ladder,
+            pinned=pinned,
+            recents=list(self._config.sizes.recents),
+        )
+        suggest_cfg = SuggestConfig(
+            mode=ring_mode,
+            pool=list(self._config.suggest.pool),
+            max_segments=self._config.suggest.max_segments,
+        )
+
         updated_config = SmolConfig(
+            config_version=1,
             trigger_key=key,
-            sizes=sizes,
+            sizes=sizes_cfg,
+            suggest=suggest_cfg,
             output_mode=mode,
             output_folder=folder,
             naming_pattern=self._config.naming_pattern,
@@ -1075,7 +1242,7 @@ class SettingsWindow(QWidget):
             reduce_motion=toggles["reduce_motion"],
             theme=self._config.theme,
             autostart=toggles["autostart"],
-            custom_sizes=self._config.custom_sizes,
+            _extra_keys=dict(self._config._extra_keys),
         )
 
         save_config(updated_config, self.config_path)

@@ -37,7 +37,11 @@ INTEGRATION_SIZES: list[tuple[str, str, str]] = [
         format_size(sz, spaced=True),
         format_size(sz, spaced=False).lower(),
     )
-    for sz in DEFAULT_CONFIG["sizes"]
+    for sz in (
+        DEFAULT_CONFIG["sizes"]["ladder"]
+        if isinstance(DEFAULT_CONFIG["sizes"], dict)
+        else DEFAULT_CONFIG["sizes"]
+    )
 ]
 
 

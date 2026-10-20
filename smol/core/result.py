@@ -25,3 +25,4 @@ class Result:
     steps: int = 0
     warning: str | None = None
     error: str | None = None
+    size_source: str = "verified"  # "estimate" | "predicted" | "verified"

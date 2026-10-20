@@ -255,7 +255,7 @@ class ToastWindow(QWidget):
                 f"<span style='color: #94a3b8; font-size: 12px;'>{orig_sz}</span> "
                 f"<span style='color: #64748b; font-size: 11px;'>→</span> "
                 f"<span style='color: #38bdf8; font-weight: 700; font-size: 12px;'>"
-                f"{final_sz}</span>"
+                f"✓ {final_sz}</span>"
             )
         elif len(shrunk_items) > 1:
             tot_orig = sum(r.original_bytes for _, r in shrunk_items)
@@ -269,7 +269,7 @@ class ToastWindow(QWidget):
                 f"<span style='color: #94a3b8; font-size: 12px;'>{orig_sz}</span> "
                 f"<span style='color: #64748b; font-size: 11px;'>→</span> "
                 f"<span style='color: #38bdf8; font-weight: 700; font-size: 12px;'>"
-                f"{final_sz}</span>"
+                f"✓ {final_sz}</span>"
             )
         elif small_items:
             src, res = small_items[0]

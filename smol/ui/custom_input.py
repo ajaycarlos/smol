@@ -3,12 +3,18 @@
 Opens a compact, floating card near the cursor:
 - Number input with validation (rejects zero, negatives, empty, or non-numeric)
 - KB/MB unit toggle (1 KB = 1000 bytes, 1 MB = 1000000 bytes)
+- Lists favourites (sizes.pinned) and recents (sizes.recents)
+- Arrow keys (Up/Down) + Enter to pick from list or type a value
+- Floor validation: "Smallest I can make this is about {floor}"
+- Records picked/confirmed custom size into sizes.recents (LRU, 5% dedupe, max 5)
 - Enter key confirms, Esc cancels
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from pathlib import Path
+
+from PySide6.QtCore import QEvent, QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication,
@@ -16,21 +22,48 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from smol.config import add_recent_size, load_config
+from smol.core.size import format_size
+
+
+class _CustomLineEdit(QLineEdit):
+    """Custom line edit that forwards Down arrow key to list widget."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.down_pressed = Signal()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() == Qt.Key.Key_Down:
+            self.parent()._on_line_edit_down()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
 
 class CustomInputDialog(QDialog):
-    """Compact frameless dialog for entering custom target sizes."""
+    """Compact frameless dialog for entering or selecting custom target sizes."""
 
     confirmed = Signal(object)
     cancelled = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        floor_bytes: int | None = None,
+        config_path: Path | str | None = None,
+    ) -> None:
         super().__init__(parent)
 
+        self._floor_bytes = floor_bytes
+        self._config_path = config_path
         self._unit = "KB"
         self._has_error = False
 
@@ -40,7 +73,6 @@ class CustomInputDialog(QDialog):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setFixedSize(220, 100)
 
         self._init_ui()
 
@@ -77,7 +109,7 @@ class CustomInputDialog(QDialog):
         row_layout = QHBoxLayout()
         row_layout.setSpacing(6)
 
-        self.line_edit = QLineEdit(self)
+        self.line_edit = _CustomLineEdit(self)
         self.line_edit.setPlaceholderText("e.g. 75")
         self.line_edit.setFocus()
         self.line_edit.textChanged.connect(self._on_text_changed)
@@ -107,7 +139,103 @@ class CustomInputDialog(QDialog):
         self.error_label.hide()
         layout.addWidget(self.error_label)
 
+        # Favourites and Recents list
+        cfg = load_config(self._config_path)
+        pinned = list(cfg.sizes.pinned)
+        recents = list(cfg.sizes.recents)
+
+        self.items_list = QListWidget(self)
+        self.items_list.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.items_list.installEventFilter(self)
+        self.items_list.itemClicked.connect(self._handle_item_clicked)
+
+        has_items = False
+        for sz in pinned:
+            has_items = True
+            lbl = f"★ {format_size(sz, spaced=True)}  (Favourite)"
+            item = QListWidgetItem(lbl)
+            item.setData(Qt.ItemDataRole.UserRole, sz)
+            self.items_list.addItem(item)
+
+        for sz in recents:
+            if sz not in pinned:
+                has_items = True
+                lbl = f"◷ {format_size(sz, spaced=True)}"
+                item = QListWidgetItem(lbl)
+                item.setData(Qt.ItemDataRole.UserRole, sz)
+                self.items_list.addItem(item)
+
+        if has_items:
+            list_font = QFont()
+            list_font.setPointSize(8)
+            self.items_list.setFont(list_font)
+            self.items_list.setStyleSheet(
+                """
+                QListWidget {
+                    background-color: rgba(20, 24, 35, 210);
+                    border: 1px solid rgba(255, 255, 255, 40);
+                    border-radius: 6px;
+                    color: #e2e8f0;
+                    padding: 2px;
+                }
+                QListWidget::item {
+                    padding: 4px 6px;
+                    border-radius: 4px;
+                }
+                QListWidget::item:hover {
+                    background-color: rgba(56, 189, 248, 40);
+                }
+                QListWidget::item:selected {
+                    background-color: rgba(56, 189, 248, 80);
+                    color: #ffffff;
+                }
+                """
+            )
+            layout.addWidget(self.items_list)
+            num_rows = min(5, self.items_list.count())
+            self.items_list.setFixedHeight(num_rows * 24 + 10)
+            self.setFixedSize(240, 110 + self.items_list.height())
+        else:
+            self.items_list.hide()
+            self.setFixedSize(220, 100)
+
         self._update_styles()
+
+    def _on_line_edit_down(self) -> None:
+        """Handle Down key in line edit by focusing list widget."""
+        if not self.items_list.isHidden() and self.items_list.count() > 0:
+            self.items_list.setFocus()
+            self.items_list.setCurrentRow(0)
+
+    def eventFilter(self, watched, event: QEvent) -> bool:
+        """Handle Up key and Enter key in items_list."""
+        if watched == self.items_list and event.type() == QEvent.Type.KeyPress:
+            key_event: QKeyEvent = event  # type: ignore
+            if (
+                key_event.key() == Qt.Key.Key_Up
+                and self.items_list.currentRow() == 0
+            ):
+                self.items_list.clearSelection()
+                self.line_edit.setFocus()
+                return True
+            elif key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._handle_list_confirm()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _handle_item_clicked(self, item: QListWidgetItem) -> None:
+        """Handle clicking an item in the favourites/recents list."""
+        sz = item.data(Qt.ItemDataRole.UserRole)
+        if sz is not None:
+            self._confirm_size(int(sz))
+
+    def _handle_list_confirm(self) -> None:
+        """Handle Enter key when items_list has selection."""
+        item = self.items_list.currentItem()
+        if item is not None:
+            sz = item.data(Qt.ItemDataRole.UserRole)
+            if sz is not None:
+                self._confirm_size(int(sz))
 
     def _update_styles(self) -> None:
         border_color = "#ff6b6b" if self._has_error else "rgba(255, 255, 255, 60)"
@@ -198,6 +326,12 @@ class CustomInputDialog(QDialog):
             self._show_error("Must be greater than 0")
             return None
 
+        # Validate against estimated floor
+        if self._floor_bytes is not None and target_bytes < self._floor_bytes:
+            formatted_floor = format_size(self._floor_bytes, spaced=True)
+            self._show_error(f"Smallest I can make this is about {formatted_floor}")
+            return None
+
         return target_bytes
 
     def _show_error(self, message: str) -> None:
@@ -206,12 +340,17 @@ class CustomInputDialog(QDialog):
         self.error_label.show()
         self._update_styles()
 
+    def _confirm_size(self, target_bytes: int) -> None:
+        """Record size into recents, emit confirmed signal, and close."""
+        add_recent_size(target_bytes, self._config_path)
+        self.confirmed.emit(target_bytes)
+        self.close()
+
     def _handle_confirm(self) -> None:
-        """Validate and confirm."""
+        """Validate and confirm typed input."""
         target_bytes = self._validate()
         if target_bytes is not None:
-            self.confirmed.emit(target_bytes)
-            self.close()
+            self._confirm_size(target_bytes)
 
     def _handle_cancel(self) -> None:
         """Cancel and close."""
@@ -231,7 +370,6 @@ class CustomInputDialog(QDialog):
         screen = QApplication.screenAt(point) or QApplication.primaryScreen()
         screen_geo = screen.availableGeometry() if screen else None
 
-        # Position slightly offset from the target point so it doesn't cover cursor
         target_x = point.x() - self.width() // 2
         target_y = point.y() - self.height() // 2
 

@@ -254,3 +254,127 @@ def test_get_config_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
     home = tmp_path / "fake_home"
     monkeypatch.setenv("HOME", str(home))
     assert get_config_path() == home / ".config" / "smol" / "config.toml"
+
+
+def test_config_schema_v1_defaults() -> None:
+    """Schema version 1 introduces config_version, sizes table, and suggest table."""
+    cfg = SmolConfig()
+    assert cfg.config_version == 1
+    assert cfg.sizes.ladder == [
+        20_000,
+        50_000,
+        100_000,
+        200_000,
+        500_000,
+        1_000_000,
+        2_000_000,
+    ]
+    assert cfg.sizes.pinned == []
+    assert cfg.sizes.recents == []
+    assert cfg.suggest.mode == "classic"
+    assert cfg.suggest.pool == [
+        20_000,
+        50_000,
+        100_000,
+        200_000,
+        500_000,
+        1_000_000,
+        2_000_000,
+        5_000_000,
+    ]
+    assert cfg.suggest.max_segments == 6
+
+
+def test_config_migration_creates_bak_and_preserves_values_and_unknown_keys(
+    tmp_path: Path,
+) -> None:
+    """Loading legacy config preserves values, saves .bak, and keeps unknown keys."""
+    cfg_file = tmp_path / "config.toml"
+    legacy_content = """trigger_key = "Ctrl+Alt"
+sizes = [50000, 100000, 200000]
+custom_sizes = [75000, 150000]
+theme = "light"
+custom_user_key = "custom_value_123"
+
+[unknown_section]
+setting_a = true
+"""
+    cfg_file.write_text(legacy_content, encoding="utf-8")
+
+    cfg = load_config(cfg_file)
+
+    # 1. Check backup file exists with original content
+    bak_file = tmp_path / "config.toml.bak"
+    assert bak_file.exists(), "config.toml.bak should be created before migrating"
+    assert bak_file.read_text(encoding="utf-8") == legacy_content
+
+    # 2. Check loaded configuration has migrated values
+    assert cfg.config_version == 1
+    assert cfg.trigger_key == "Ctrl+Alt"
+    assert cfg.sizes.ladder == [50_000, 100_000, 200_000]
+    assert cfg.sizes.recents == [75_000, 150_000]
+    assert cfg.theme == "light"
+    assert cfg.suggest.mode == "classic"
+    assert cfg.suggest.max_segments == 6
+
+    # 3. Check saving preserves unknown keys
+    save_config(cfg, cfg_file)
+    reloaded_text = cfg_file.read_text(encoding="utf-8")
+    assert "custom_user_key" in reloaded_text
+    assert "custom_value_123" in reloaded_text
+    assert "unknown_section" in reloaded_text
+
+
+def test_sizes_caps_validation(tmp_path: Path) -> None:
+    """Ladder is capped at max 7, pinned max 12, recents max 5."""
+    cfg_file = tmp_path / "capped.toml"
+    content = """config_version = 1
+
+[sizes]
+ladder = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+pinned = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+recents = [100, 200, 300, 400, 500, 600, 700]
+
+[suggest]
+mode = "smart"
+max_segments = 5
+"""
+    cfg_file.write_text(content, encoding="utf-8")
+
+    cfg = load_config(cfg_file)
+    assert len(cfg.sizes.ladder) == 7
+    assert cfg.sizes.ladder == [10, 20, 30, 40, 50, 60, 70]
+    assert len(cfg.sizes.pinned) == 12
+    assert cfg.sizes.pinned == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    assert len(cfg.sizes.recents) == 5
+    assert cfg.sizes.recents == [100, 200, 300, 400, 500]
+    assert cfg.suggest.mode == "smart"
+    assert cfg.suggest.max_segments == 5
+
+
+def test_recents_lru_and_dedupe_within_5_percent(tmp_path: Path) -> None:
+    """Adding custom size dedupes within 5%, moves to front, and caps at 5."""
+    from smol.config import add_recent_size
+
+    cfg_file = tmp_path / "recents.toml"
+
+    # Add 100 KB
+    r1 = add_recent_size(100_000, cfg_file)
+    assert r1 == [100_000]
+
+    # Add 103 KB (within 5% of 100_000): should dedupe and put 103_000 at front
+    r2 = add_recent_size(103_000, cfg_file)
+    assert r2 == [103_000]
+
+    # Add distinct sizes
+    add_recent_size(200_000, cfg_file)
+    add_recent_size(300_000, cfg_file)
+    add_recent_size(400_000, cfg_file)
+    r_five = add_recent_size(500_000, cfg_file)
+    # Most recent first
+    assert r_five == [500_000, 400_000, 300_000, 200_000, 103_000]
+
+    # Add 6th item: 600_000 -> drops oldest (103_000)
+    r_six = add_recent_size(600_000, cfg_file)
+    assert r_six == [600_000, 500_000, 400_000, 300_000, 200_000]
+    assert len(r_six) == 5

@@ -382,9 +382,17 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
   - Comprehensive unit test suite in `tests/core/test_suggest.py` (15 tests).
   - VERIFY: All 376 tests pass; ruff clean; verified 8-sample comparison table across 12 KB to 40 MB.
 
+- Extend smol/config.py to schema version 1 and integrate with Donut UI and Settings window:
+  - Schema v1: `config_version = 1`, `sizes.ladder` (max 7, default 20/50/100/200/500 KB/1 MB/2 MB), `sizes.pinned` (favourites, max 12), `sizes.recents` (LRU, max 5, 5% dedupe), `suggest.mode` ("classic" default | "smart"), `suggest.pool`, `suggest.max_segments` (default 6).
+  - Migration: Preserves all existing values and unknown keys, adds defaults for new fields, and saves a one-time copy as `config.toml.bak` before migrating.
+  - Donut UI: Uses `suggest_sizes` with max 8 segments including fixed last "Custom…". Classic mode dims ineligible entries with clear reasons. Non-blocking `FloorWorker` estimates floor in background without UI freeze. Hover predictions show `~96 KB` (or ineligibility reason if dimmed). Finished result and toast show check mark (`✓ {final_sz}`).
+  - Custom popup: Upgraded `CustomInputDialog` listing favourites and recents with Up/Down arrow + Enter navigation, floor validation ("Smallest I can make this is about {floor}"), and LRU recents recording.
+  - Settings window: Added Ladder editor (max 7), Favourites editor (max 12), and Donut Ring Mode switch ("Classic ring" vs "Smart ring") with full validation.
+  - Result Provenance: Added `size_source` field (`"estimate"` | `"predicted"` | `"verified"`) in `Result` and exposed in `smol shrink --json`.
+  - VERIFY: Full test suite passes (391 tests); ruff clean; legacy `config.toml` load creates `.bak`; screenshots of donut captured for 1.2 MB, 12 KB, and 40 MB files in both Classic and Smart mode in `screenshots/verification/`.
+
 ## Next
 - Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
-- A1: Classic ring default (classic fixed ring default, max 8 segments, Custom popup with favourites and recents).
 - A2 to A5, feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
 
 ## Decisions

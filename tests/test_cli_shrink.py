@@ -135,6 +135,23 @@ def test_shrink_json_shape(
     assert item["height"] is not None
     assert item["quality"] is not None
     assert item["error"] is None
+    assert item["size_source"] == "verified"
+
+
+def test_shrink_json_dry_run_size_source(
+    samples_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dry-run with `--json` outputs size_source='predicted'."""
+    src = tmp_path / "portrait.jpg"
+    shutil.copy2(samples_dir / "portrait.jpg", src)
+
+    code = smol.cli.main(["shrink", str(src), "--max", "100KB", "--dry-run", "--json"])
+    assert code == 0
+
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert len(data) == 1
+    assert data[0]["size_source"] == "predicted"
 
 
 def test_shrink_impossible_target(

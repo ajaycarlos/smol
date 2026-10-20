@@ -237,7 +237,7 @@ def suggest_sizes(
         suggestions: list[SizeSuggestion] = []
         for cand in deduped:
             b = cand.bytes
-            if b >= original_bytes:
+            if b > original_bytes:
                 eligible = False
                 reason = "larger than the file"
             elif b < floor_bytes:

@@ -23,13 +23,19 @@ def test_donut_loads_custom_sizes_from_config(app, tmp_path: Path):
     save_config({"custom_sizes": [75_000, 150_000]}, config_file)
 
     donut = DonutWindow(files=[sample], config_path=config_file)
-    # Default 8 segments (7 sizes + Custom…) + 2 custom sizes = 10 segments
-    assert len(donut.segments) == 10
-    labels = [s.label for s in donut.segments]
-    assert "75 KB" in labels
-    assert "150 KB" in labels
-    assert labels[-1] == "Custom…"
+    # D-007: Maximum 8 segments including Custom…; custom sizes live in Custom dialog
+    assert len(donut.segments) <= 8
+    assert donut.segments[-1].label == "Custom…"
 
+    from smol.ui.custom_input import CustomInputDialog
+
+    dialog = CustomInputDialog(config_path=config_file)
+    items = [
+        dialog.items_list.item(i).text() for i in range(dialog.items_list.count())
+    ]
+    assert any("75 KB" in it or "150 KB" in it for it in items)
+
+    dialog.close()
     donut.close()
 
 

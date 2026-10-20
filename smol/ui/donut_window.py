@@ -10,6 +10,7 @@ Pressing Esc or clicking outside closes the overlay.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import os
 import re
@@ -21,6 +22,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
 from PySide6.QtCore import (
     Property,
     QEasingCurve,
@@ -31,6 +33,7 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     QRectF,
     Qt,
+    QThread,
     Signal,
 )
 from PySide6.QtGui import (
@@ -56,7 +59,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
-from smol.core.config import add_custom_size, get_custom_sizes, get_reduce_motion
+from smol.core.config import get_reduce_motion
 from smol.core.result import Result
 from smol.core.size import format_size, parse_size
 from smol.ui.custom_input import CustomInputDialog
@@ -64,6 +67,9 @@ from smol.ui.donut_geometry import DonutGeometry
 from smol.ui.prediction import Prediction, PredictionService
 from smol.ui.toast import ToastWindow
 from smol.ui.worker import ShrinkWorker
+
+logger = logging.getLogger(__name__)
+Image.init()
 
 DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
     ("20 KB", 20_000),
@@ -77,24 +83,81 @@ DEFAULT_SEGMENT_CONFIG: list[tuple[str, int | None]] = [
 ]
 
 
+class FloorWorker(QThread):
+    """Background worker estimating minimum achievable size using estimate_floor."""
+
+    finished_floor = Signal(int, str)  # (floor_bytes, source)
+
+    def __init__(
+        self,
+        file_path: Path | str,
+        min_dim: int = 200,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.file_path = Path(file_path).resolve()
+        self.min_dim = min_dim
+        self._is_cancelled = False
+
+    def cancel(self) -> None:
+        self._is_cancelled = True
+
+    def run(self) -> None:
+        try:
+            from PIL import Image
+
+            Image.init()
+            if self._is_cancelled:
+                return
+
+            from smol.core.suggest import estimate_floor
+
+            est = estimate_floor(self.file_path, options={"min_dim": self.min_dim})
+            if not self._is_cancelled:
+                self.finished_floor.emit(est.bytes, est.source)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Error estimating floor for {self.file_path}: {exc}")
+
+
 def build_segment_config(
     config_path: Path | str | None = None,
+    original_bytes: int = 0,
+    floor_bytes: int = 0,
+    file_type: str = "image",
 ) -> list[tuple[str, int | None]]:
-    """Build list of segment tuples from config: sizes, custom sizes, and Custom…"""
+    """Build list of segment tuples from config using suggest_sizes.
+
+    Returns up to 8 segments: at most 7 suggestion rungs + 1 Custom… fixed at end.
+    """
     from smol.config import load_config
+    from smol.core.suggest import SuggestOptions, suggest_sizes
 
     cfg = load_config(config_path)
-    sizes = cfg.sizes
-    base: list[tuple[str, int | None]] = [
-        (format_size(sz, spaced=True), sz) for sz in sizes
-    ]
-    base_bytes = {b for _, b in base if b is not None}
-    custom_sizes = get_custom_sizes(config_path)
-    for sz in custom_sizes:
-        if sz not in base_bytes:
-            base.append((format_size(sz, spaced=True), sz))
-    base.append(("Custom…", None))
-    return base
+    suggest_cfg = cfg.suggest
+    sizes_cfg = cfg.sizes
+
+    opts = SuggestOptions(
+        mode=suggest_cfg.mode,
+        ladder=tuple(sizes_cfg.ladder),
+        pool=tuple(suggest_cfg.pool),
+        pinned=tuple(sizes_cfg.pinned),
+        recents=tuple(sizes_cfg.recents),
+        max_segments=min(7, suggest_cfg.max_segments),
+        min_dim=cfg.min_side,
+    )
+
+    orig_b = original_bytes if original_bytes > 0 else 100_000_000_000
+    suggestions = suggest_sizes(
+        original_bytes=orig_b,
+        floor_bytes=floor_bytes,
+        file_type=file_type,
+        options=opts,
+    )
+
+    limited = suggestions[:7]
+    result: list[tuple[str, int | None]] = [(s.label, s.bytes) for s in limited]
+    result.append(("Custom…", None))
+    return result
 
 
 class SegmentItem(QObject):
@@ -106,6 +169,7 @@ class SegmentItem(QObject):
         label: str,
         target_bytes: int | None,
         enabled: bool = True,
+        reason: str | None = None,
         reduce_motion: bool = False,
         parent: QObject | None = None,
     ) -> None:
@@ -114,6 +178,7 @@ class SegmentItem(QObject):
         self.label = label
         self.target_bytes = target_bytes
         self.enabled = enabled
+        self.reason = reason
         self.reduce_motion = reduce_motion
         self._hover_progress: float = 0.0
         self._hover_anim: QPropertyAnimation | None = None
@@ -319,7 +384,7 @@ class DonutWindow(QWidget):
 
     def __init__(
         self,
-        files: Sequence[Path | str],
+        files: Sequence[Path | str] | None = None,
         size: int = 380,
         inner_radius: float = 75.0,
         outer_radius: float = 175.0,
@@ -328,9 +393,11 @@ class DonutWindow(QWidget):
         config_path: Path | str | None = None,
         reduce_motion: bool | None = None,
         parent: QWidget | None = None,
+        file_paths: Sequence[Path | str] | None = None,
     ) -> None:
         super().__init__(parent)
-        self.file_paths = [Path(f) for f in files]
+        input_files = files if files is not None else (file_paths or [])
+        self.file_paths = [Path(f) for f in input_files]
         self.overlay_size = size
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
@@ -365,7 +432,13 @@ class DonutWindow(QWidget):
         self._hovered_idx: int | None = None
         self._current_prediction: Prediction | None = None
         self._fading_prediction: Prediction | None = None
+        self._hover_reason: str | None = None
         self._blurred_desktop: QPixmap | None = None
+
+        # Floor estimation worker and attributes
+        self._floor_bytes: int | None = None
+        self._floor_source: str | None = None
+        self.floor_worker: FloorWorker | None = None
 
         # Prediction service for hover estimation
         self.prediction_service = PredictionService(debounce_ms=150, parent=self)
@@ -492,8 +565,43 @@ class DonutWindow(QWidget):
                     break
 
     def _init_segments(self) -> None:
-        """Initialize segment items and apply dimming logic."""
-        self.segments_config = build_segment_config(self.config_path)
+        """Initialize segment items and apply dimming logic via suggest_sizes."""
+        file_type = "image"
+        first = self._first_image_path()
+        if first is not None and first.suffix.lower() == ".pdf":
+            file_type = "pdf"
+
+        from smol.config import load_config
+        from smol.core.suggest import SuggestOptions, suggest_sizes
+
+        cfg = load_config(self.config_path)
+        suggest_cfg = cfg.suggest
+        sizes_cfg = cfg.sizes
+
+        opts = SuggestOptions(
+            mode=suggest_cfg.mode,
+            ladder=tuple(sizes_cfg.ladder),
+            pool=tuple(suggest_cfg.pool),
+            pinned=tuple(sizes_cfg.pinned),
+            recents=tuple(sizes_cfg.recents),
+            max_segments=min(7, suggest_cfg.max_segments),
+            min_dim=cfg.min_side,
+        )
+
+        orig_b = self.max_file_bytes if self.max_file_bytes > 0 else 100_000_000_000
+        floor_b = self._floor_bytes or 0
+
+        suggestions = suggest_sizes(
+            original_bytes=orig_b,
+            floor_bytes=floor_b,
+            file_type=file_type,
+            options=opts,
+        )
+
+        limited = suggestions[:7]
+        self.segments_config = (
+            [(s.label, s.bytes) for s in limited] + [("Custom…", None)]
+        )
         self.geometry_calc = DonutGeometry(
             n_segments=len(self.segments_config),
             inner_radius=self.inner_radius,
@@ -501,24 +609,88 @@ class DonutWindow(QWidget):
             gap_angle=self.gap_angle,
         )
         self.segments: list[SegmentItem] = []
-        for idx, (label, target_bytes) in enumerate(self.segments_config):
-            # Segments larger than the file are dimmed and unclickable
-            # If no files or zero size, keep all segments enabled
-            if not self.file_paths or self.max_file_bytes == 0 or target_bytes is None:
+        for idx, s in enumerate(limited):
+            if not self.file_paths or self.max_file_bytes == 0:
                 enabled = True
+                reason = None
             else:
-                enabled = target_bytes <= self.max_file_bytes
+                enabled = s.eligible
+                reason = s.reason
 
             self.segments.append(
                 SegmentItem(
                     index=idx,
-                    label=label,
-                    target_bytes=target_bytes,
+                    label=s.label,
+                    target_bytes=s.bytes,
                     enabled=enabled,
+                    reason=reason,
                     reduce_motion=self.reduce_motion,
                     parent=self,
                 )
             )
+
+        # Append "Custom…" as the fixed last segment
+        self.segments.append(
+            SegmentItem(
+                index=len(self.segments),
+                label="Custom…",
+                target_bytes=None,
+                enabled=True,
+                reason=None,
+                reduce_motion=self.reduce_motion,
+                parent=self,
+            )
+        )
+
+    def _start_floor_worker(self) -> None:
+        """Estimate lowest achievable size in background without UI freeze."""
+        if self.floor_worker is not None and self.floor_worker.isRunning():
+            return
+
+        first_file = self._first_image_path()
+        if (
+            first_file is not None
+            and first_file.is_file()
+            and first_file.stat().st_size > 0
+        ):
+            from smol.config import load_config
+
+            cfg = load_config(self.config_path)
+            self.floor_worker = FloorWorker(
+                first_file, min_dim=cfg.min_side, parent=self
+            )
+            self.floor_worker.finished_floor.connect(self._on_floor_estimated)
+            self.floor_worker.start()
+
+    def _on_floor_estimated(self, floor_bytes: int, source: str) -> None:
+        """Handle floor estimation results from worker thread."""
+        self._floor_bytes = floor_bytes
+        self._floor_source = source
+        self._update_segment_dimming()
+
+    def _update_segment_dimming(self) -> None:
+        """Update segment dimming when floor estimation completes."""
+        from smol.config import load_config
+
+        cfg = load_config(self.config_path)
+        if cfg.suggest.mode == "smart":
+            self._init_segments()
+        else:
+            floor_b = self._floor_bytes or 0
+            for seg in self.segments:
+                if seg.target_bytes is None:
+                    continue
+                if self.max_file_bytes > 0 and seg.target_bytes > self.max_file_bytes:
+                    seg.enabled = False
+                    seg.reason = "larger than the file"
+                elif floor_b > 0 and seg.target_bytes < floor_b:
+                    seg.enabled = False
+                    formatted = format_size(floor_b, spaced=True)
+                    seg.reason = f"too small for this file (min about {formatted})"
+                else:
+                    seg.enabled = True
+                    seg.reason = None
+        self.update()
 
     def _configure_window(self) -> None:
         """Configure Qt window flags, attributes, opacity, tracking, and drops."""
@@ -645,9 +817,10 @@ class DonutWindow(QWidget):
         return self._job_queue
 
     def showEvent(self, event: object) -> None:
-        """Trigger open fan-out animation when overlay is shown."""
+        """Trigger open fan-out animation and start floor estimation."""
         super().showEvent(event)
         self.start_open_animation()
+        self._start_floor_worker()
 
     def start_open_animation(self) -> None:
         """Start 120 ms OutCubic scale from centre (instant if reduce_motion)."""
@@ -881,7 +1054,11 @@ class DonutWindow(QWidget):
         if self._custom_dialog is not None and self._custom_dialog.isVisible():
             self._custom_dialog.close()
 
-        self._custom_dialog = CustomInputDialog()
+        self._custom_dialog = CustomInputDialog(
+            parent=self,
+            floor_bytes=self._floor_bytes,
+            config_path=self.config_path,
+        )
         self._custom_dialog.confirmed.connect(self._on_custom_confirmed)
         self._custom_dialog.cancelled.connect(self._on_custom_cancelled)
 
@@ -898,7 +1075,9 @@ class DonutWindow(QWidget):
 
     def _on_custom_confirmed(self, target_bytes: int) -> None:
         """Handle confirmed custom target size."""
-        add_custom_size(target_bytes, self.config_path)
+        from smol.config import add_recent_size
+
+        add_recent_size(target_bytes, self.config_path)
 
         files = list(self._pending_custom_files) if self._pending_custom_files else None
         self._pending_custom_files = []
@@ -949,18 +1128,25 @@ class DonutWindow(QWidget):
         if idx != self._hovered_idx:
             self._set_hovered_segment(idx)
             if idx is None:
+                self._hover_reason = None
                 self.prediction_service.cancel()
                 self._animate_prediction_opacity(0.0)
             else:
                 item = self.segments[idx]
-                if (
-                    not item.enabled
-                    or item.target_bytes is None
-                    or self.state != "idle"
-                ):
+                if not item.enabled:
+                    self.prediction_service.cancel()
+                    if item.reason:
+                        self._hover_reason = item.reason
+                        self._animate_prediction_opacity(1.0)
+                    else:
+                        self._hover_reason = None
+                        self._animate_prediction_opacity(0.0)
+                elif item.target_bytes is None or self.state != "idle":
+                    self._hover_reason = None
                     self.prediction_service.cancel()
                     self._animate_prediction_opacity(0.0)
                 else:
+                    self._hover_reason = None
                     first_file = self._first_image_path()
                     if first_file is not None:
                         self.prediction_service.request(first_file, item.target_bytes)
@@ -970,6 +1156,7 @@ class DonutWindow(QWidget):
         """Clear hover state and cancel pending predictions when mouse leaves window."""
         if self._hovered_idx is not None:
             self._set_hovered_segment(None)
+            self._hover_reason = None
             self.prediction_service.cancel()
             self._animate_prediction_opacity(0.0)
 
@@ -983,6 +1170,11 @@ class DonutWindow(QWidget):
             if seg._hover_anim is not None and seg._hover_anim.state():
                 seg._hover_anim.stop()
 
+        if self.floor_worker is not None and self.floor_worker.isRunning():
+            self.floor_worker.cancel()
+            self.floor_worker.quit()
+            self.floor_worker.wait(1000)
+
         if self._custom_dialog is not None and self._custom_dialog.isVisible():
             self._custom_dialog.close()
         self.prediction_service.cancel()
@@ -991,6 +1183,15 @@ class DonutWindow(QWidget):
             self._shrink_worker.cancel()
             self._shrink_worker.wait(300)
         super().closeEvent(event)
+
+    def __del__(self) -> None:
+        try:
+            worker = getattr(self, "floor_worker", None)
+            if worker is not None and worker.isRunning():
+                worker.cancel()
+                worker.wait(500)
+        except (RuntimeError, AttributeError):
+            pass
 
     def _parse_drop_uris(self, mime_data: QMimeData | object) -> list[Path]:
         """Extract existing local Path objects from drag-and-drop MIME data."""
@@ -1281,7 +1482,7 @@ class DonutWindow(QWidget):
                 if res.output_path is not None:
                     orig_sz = format_size(res.original_bytes, spaced=True)
                     final_sz = format_size(res.final_bytes, spaced=True)
-                    self.result_message = f"{orig_sz} → {final_sz}"
+                    self.result_message = f"{orig_sz} → ✓ {final_sz}"
                     if res.final_bytes > 0:
                         self._countdown_bytes = res.final_bytes
                 else:
@@ -2178,8 +2379,21 @@ class DonutWindow(QWidget):
             )
 
             pred = self._current_prediction or self._fading_prediction
+            active_text = None
+            is_ok = True
+            if (
+                self._hover_reason
+                and self._hovered_idx is not None
+                and not self.segments[self._hovered_idx].enabled
+            ):
+                active_text = self._hover_reason
+                is_ok = False
+            elif pred is not None:
+                active_text = pred.text
+                is_ok = pred.ok
+
             op = self._prediction_opacity
-            if op <= 0.0 or pred is None:
+            if op <= 0.0 or active_text is None:
                 painter.setPen(QColor(0, 0, 0, 160))
                 painter.drawText(
                     size_rect.adjusted(0, 1, 0, 1),
@@ -2191,7 +2405,6 @@ class DonutWindow(QWidget):
                     size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text
                 )
             elif op >= 1.0:
-                is_ok = pred.ok
                 size_color = (
                     QColor(165, 225, 255, 255) if is_ok else QColor(251, 191, 36, 255)
                 )
@@ -2199,10 +2412,10 @@ class DonutWindow(QWidget):
                 painter.drawText(
                     size_rect.adjusted(0, 1, 0, 1),
                     Qt.AlignmentFlag.AlignCenter,
-                    pred.text,
+                    active_text,
                 )
                 painter.setPen(size_color)
-                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, pred.text)
+                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, active_text)
             else:
                 # Smooth cross-fade between file size and prediction label
                 file_alpha = int(240 * (1.0 - op))
@@ -2218,16 +2431,16 @@ class DonutWindow(QWidget):
                     size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text
                 )
 
-                pred_color = QColor(165, 225, 255) if pred.ok else QColor(251, 191, 36)
+                pred_color = QColor(165, 225, 255) if is_ok else QColor(251, 191, 36)
                 pred_color.setAlpha(int(255 * op))
                 shadow_alpha_pred = int(160 * op)
                 painter.setPen(QColor(0, 0, 0, shadow_alpha_pred))
                 painter.drawText(
                     size_rect.adjusted(0, 1, 0, 1),
                     Qt.AlignmentFlag.AlignCenter,
-                    pred.text,
+                    active_text,
                 )
                 painter.setPen(pred_color)
-                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, pred.text)
+                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, active_text)
 
         painter.end()
