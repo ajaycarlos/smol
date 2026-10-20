@@ -358,13 +358,23 @@ M4 — Hold-key daemon service & summoning integration (In progress).
   - Created automated verification script `scripts/verify_video_donut_flow.py`.
   - VERIFY: Shrinking video from donut shows moving progress (5 steps, 1.0% to 100.0%); Esc cancels cleanly with no partial file left behind; right-click configs include video/audio; full test suite passes (401 passed in ~55s); `uv run ruff check .` clean. Tagged `v0.8.0`.
 
+- Clean up and defer video and audio compression to v1.1 (ship image + PDF for v1.0):
+  - Removed `smol/core/video.py`, `smol/core/audio.py`, and `smol/core/media_math.py`.
+  - Removed video/audio routing, video thumbnail extraction, and video/audio MIME types/extensions from engine (`smol.core.router`), Donut UI (`smol/ui/donut_window.py`), worker thread (`smol/ui/worker.py`), and file manager integrations (`smol/integrations/manager.py`).
+  - Moved `ffmpeg` and `ffprobe` from required tools to optional/future tools section in `smol doctor` with install guidance for future v1.1.
+  - Removed standalone video/audio unit test suites (`tests/core/test_video.py`, `tests/core/test_audio.py`, `tests/core/test_media_math.py`), CLI video/audio tests, and verification scripts.
+  - Updated `PLAN.md` to mark M8 (video/audio) and M9 as deferred to v1.1.
+  - Updated `README.md` to document supported formats in v1.0 as images (JPEG, PNG, WebP, HEIC, AVIF) and PDF only.
+  - Re-routed active DonutWindow Esc cancellation test in `tests/ui/test_donut_window.py` to use images.
+
 ## Current milestone
-M8 — Video and audio engine (Completed — v0.8.0).
+v1.0 Cleanup & Stabilization (Image + PDF engine shipping for v1.0; video/audio deferred to v1.1).
 
 ## Next
-- Milestone M9: Packaging, polish, and system integration.
+- Security pass and packaging for v1.0 release.
 
 ## Decisions
+- 2026-10-20: Defer video and audio compression to v1.1 to ship a rock-solid, focused v1.0 release covering images (JPEG, PNG, WebP, HEIC, AVIF) and PDF only. Keep ffmpeg/ffprobe detection in smol doctor as optional tools.
 - 2026-10-20: In `smol/core/video.py` and `smol/core/audio.py`, stream ffmpeg execution via `-progress pipe:1 -nostats` in line-buffered `subprocess.Popen`, parsing `out_time_us` against media duration and emitting normalized ring progress fractions and live byte countdowns on `progress=` block completions.
 - 2026-10-20: In `smol/ui/worker.py`, maintain thread-safe registration of active child subprocesses (`_active_proc`) and immediately issue `proc.kill()` on `cancel()`, handling exit code -9 / `CancellationError` to unlink partial output files and leave zero disk leftovers.
 - 2026-10-20: In `smol/core/audio.py`, match input audio families (`.mp3` -> `libmp3lame`, `.m4a`/`.aac` -> `aac`, `.opus`/`.ogg` -> `libopus`). For `libopus`, specify `-vbr constrained` to ensure adherence to calculated target bitrates.
@@ -382,9 +392,10 @@ M8 — Video and audio engine (Completed — v0.8.0).
 - 2026-10-19: In `smol/core/pdf.py`, use Ghostscript downsampling ladder (DPI 200→60, QFactor 0.40→1.00) + `qpdf --object-streams=generate`, stopping at first matching rung and validating syntax with `qpdf --check`.
 - 2026-10-19: Implement unified file-type router in `smol/core/router.py` streaming Ghostscript ladder rung numbers as progress fractions into Donut progress rings.
 
-## Known limits (v0.8.0)
+## Known limits (v1.0)
+- Formats supported: Images (JPEG, PNG, WebP, HEIC, AVIF) and PDF only. Video and audio deferred to v1.1.
 - Input files already <= target size are untouched (reports no-op warning unless `--force` / `force_reencode` is enabled).
-- Incompressible or sub-floor data: if minimum dimension floor (default 200 px) or minimum bitrate floor (24 kbps audio) still exceeds target, engine honestly fails rather than producing unusable corrupted files or oversized files.
+- Incompressible or sub-floor data: if minimum dimension floor (default 200 px) still exceeds target, engine honestly fails rather than producing unusable corrupted files or oversized files.
 - PNG format kept by default (`--keep-format`): if 64-color palette quantization and downscaling cannot reach target, engine reports honest failure suggesting `--allow-convert`.
 - Decompression bomb threshold: images exceeding 89.5 million pixels are safely rejected to protect system memory.
 - PDF: Incompressible text-only vector PDFs or PDFs already below downsampling limits report honest failures stating smallest achievable size.

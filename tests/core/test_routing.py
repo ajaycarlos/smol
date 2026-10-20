@@ -29,7 +29,8 @@ def test_detect_file_type() -> None:
     assert detect_file_type("DOCUMENT.PDF") == "pdf"
 
     assert detect_file_type("notes.txt") == "unsupported"
-    assert detect_file_type("movie.mp4") == "video"
+    assert detect_file_type("movie.mp4") == "unsupported"
+    assert detect_file_type("song.mp3") == "unsupported"
     assert detect_file_type("archive.zip") == "unsupported"
 
 
@@ -112,15 +113,3 @@ def test_shrink_file_unsupported_format(tmp_path: Path) -> None:
     )
 
 
-
-def test_shrink_file_routes_video_to_shrink_video(tmp_path: Path) -> None:
-    """shrink_file dispatches video files to shrink_video."""
-    src = tmp_path / "clip.mp4"
-    # Small dummy clip with target >= size returns ok=True via shrink_video
-    src.write_bytes(b"\x00" * 1024)
-
-    res = shrink_file(src, target_bytes=2048)
-    assert res.ok is True
-    assert res.final_bytes == 1024
-    assert res.warning is not None
-    assert "already small enough" in res.warning.lower()

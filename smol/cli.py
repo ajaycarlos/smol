@@ -84,7 +84,7 @@ def doctor() -> int:
     else:
         lines.append(f"✗ Python ({py_ver}, need 3.12+)  (install Python 3.12+)")
 
-    # 2. Command-line tools
+    # 2. Command-line tools (required)
     tools = [
         (
             "uv",
@@ -94,8 +94,6 @@ def doctor() -> int:
                 "or pip install uv"
             ),
         ),
-        ("ffmpeg", "ffmpeg", "install ffmpeg: sudo apt install ffmpeg"),
-        ("ffprobe", "ffprobe", "install ffprobe: sudo apt install ffmpeg"),
         ("gs (Ghostscript)", "gs", "install ghostscript: sudo apt install ghostscript"),
         ("qpdf", "qpdf", "install qpdf: sudo apt install qpdf"),
         ("git", "git", "install git: sudo apt install git"),
@@ -105,6 +103,18 @@ def doctor() -> int:
             lines.append(f"✓ {label}")
         else:
             lines.append(f"✗ {label}  ({hint})")
+
+    # Optional / future tools (deferred to v1.1)
+    lines.append("Optional / future tools (deferred to v1.1):")
+    optional_tools = [
+        ("ffmpeg", "ffmpeg", "install ffmpeg: sudo apt install ffmpeg"),
+        ("ffprobe", "ffprobe", "install ffprobe: sudo apt install ffmpeg"),
+    ]
+    for label, binary, hint in optional_tools:
+        if shutil.which(binary):
+            lines.append(f"✓ {label} (optional, video/audio)")
+        else:
+            lines.append(f"- {label} (optional, for v1.1 video/audio: {hint})")
 
     # 3. Environment variables
     session_type = os.environ.get("XDG_SESSION_TYPE")

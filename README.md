@@ -9,6 +9,12 @@
 - **Honest**: If a target cannot be reached without ruining the file below minimum dimension/quality floors, `smol` tells you honestly instead of creating an unusable file or pretending success.
 - **Offline & Private**: Zero network calls, zero tracking.
 
+### Supported Formats (v1.0)
+- **Images**: JPEG, PNG, WebP, HEIC (and AVIF)
+- **Documents**: PDF only
+
+*(Video and audio compression are deferred to v1.1).*
+
 ---
 
 ## Try it

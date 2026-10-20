@@ -79,7 +79,7 @@ def test_shrink_worker_emits_step_progress(
     assert emitted_steps[-1][1] <= 100_000
 
 
-def test_shrink_worker_pdf_video_stub(
+def test_shrink_worker_pdf_progress(
     qapp, samples_dir: Path, tmp_path: Path
 ) -> None:
     """ShrinkWorker emits Ghostscript rung step progress for PDF files."""

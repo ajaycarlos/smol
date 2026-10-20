@@ -303,39 +303,5 @@ def test_file_manager_integrations_include_pdf(tmp_path: Path):
 
 
 
-def test_file_manager_integrations_include_video_and_audio(tmp_path: Path):
-    """Nemo, Dolphin, and Thunar action files include video and audio extensions."""
-    # 1. Nemo
-    nemo_actions = tmp_path / "nemo" / "actions"
-    nemo_config = tmp_path / "nemo" / "config"
-    nemo = NemoIntegrator(actions_dir=nemo_actions, config_dir=nemo_config)
-    nemo.install()
-    sample_action = next(iter(nemo_actions.glob("*.nemo_action")))
-    nemo_content = sample_action.read_text(encoding="utf-8")
-    assert "mp4;" in nemo_content
-    assert "mov;" in nemo_content
-    assert "mp3;" in nemo_content
-    assert "m4a;" in nemo_content
-    assert "flac;" in nemo_content
-
-    # 2. Dolphin
-    dolphin_dir = tmp_path / "dolphin"
-    dolphin = DolphinIntegrator(service_menu_dir=dolphin_dir)
-    dolphin.install()
-    dolphin_desktop = dolphin_dir / "smol_shrink.desktop"
-    dolphin_content = dolphin_desktop.read_text(encoding="utf-8")
-    assert "video/mp4;" in dolphin_content
-    assert "audio/mpeg;" in dolphin_content
-
-    # 3. Thunar
-    thunar_uca = tmp_path / "thunar" / "uca.xml"
-    thunar = ThunarIntegrator(uca_file=thunar_uca)
-    thunar.install()
-    thunar_content = thunar_uca.read_text(encoding="utf-8")
-    assert "*.mp4;" in thunar_content
-    assert "*.mp3;" in thunar_content
-    assert "<audio-files" in thunar_content
-    assert "<video-files" in thunar_content
-
 
 

@@ -9,8 +9,8 @@ Core story: a 1 MB passport photo must go under 100 KB for a website upload form
 
 ## 2. Honest scope
 "Any file to any size" is impossible: already-compressed data has a floor. So:
-- v1 = **images** (JPEG, PNG, WebP, HEIC) done really well.
-- Then **PDF**, then **video/audio**, then Office docs (by recompressing the images inside).
+- v1 = **images** (JPEG, PNG, WebP, HEIC) done really well, and **PDF**.
+- Video and audio deferred to v1.1.
 - When a target is impossible, say so and offer the smallest honest size. Never fake success.
 
 ## 3. Principles
@@ -69,7 +69,7 @@ Ghostscript ladder, stop at the first (best quality) rung that fits:
 image DPI 200 -> 150 -> 120 -> 96 -> 72 -> 60, JPEG quality about 80 -> 50. Then `qpdf` object-stream optimisation.
 Scanned PDFs shrink well. Text-only PDFs usually do not; report that honestly.
 
-### 7.3 Video and audio (M8)
+### 7.3 Video and audio (M8) (deferred to v1.1)
 - Read duration with `ffprobe`.
 - Total bits = target * 8 * 0.92 (safety margin). Audio 64 kbps. Video bitrate = remainder.
 - If bits-per-pixel is too low, step the resolution down (1080 -> 720 -> 480 -> 360).
@@ -139,9 +139,10 @@ Each milestone ends with a "Done when" check the owner can run.
 
 **M7 — PDF engine.** Section 7.2. Done when a 5 MB scanned PDF goes under 1 MB and still reads clearly.
 
-**M8 — Video/audio engine.** Section 7.3. Done when a 30 s phone clip lands at 90–100% of an 8 MB target.
+**M8 — Video/audio engine (deferred to v1.1)**
+Section 7.3. Done when a 30 s phone clip lands at 90–100% of an 8 MB target.
 
-**M9 — Packaging and release**
+**M9 — Packaging and release (deferred to v1.1)**
 - AppImage and/or `.deb`, README with a demo GIF, LICENSE (MIT), CI that runs tests, GitHub release.
 - Do not bundle ffmpeg/Ghostscript (licensing); detect and guide.
 

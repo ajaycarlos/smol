@@ -127,7 +127,7 @@ class NemoIntegrator:
                 f"Exec={self.smol_bin} shrink --notify --max {size_arg} -- %F\n"
                 "Icon-Name=image-x-generic\n"
                 "Selection=notnone\n"
-                "Extensions=jpg;jpeg;png;webp;heic;avif;pdf;mp4;mov;mkv;webm;avi;mp3;m4a;aac;opus;ogg;flac;wav;\n"
+                "Extensions=jpg;jpeg;png;webp;heic;avif;pdf;\n"
                 "Quote=double\n"
             )
 
@@ -393,7 +393,7 @@ class DolphinIntegrator:
             "[Desktop Entry]",
             "Type=Service",
             "ServiceTypes=KonqPopupMenu/Plugin",
-            "MimeType=image/jpeg;image/png;image/webp;image/heif;image/avif;application/pdf;video/mp4;video/quicktime;video/x-matroska;video/webm;video/x-msvideo;audio/mpeg;audio/mp4;audio/aac;audio/ogg;audio/opus;audio/flac;audio/x-wav;",
+            "MimeType=image/jpeg;image/png;image/webp;image/heif;image/avif;application/pdf;",
             f"Actions={';'.join(actions)};",
             "X-KDE-Submenu=Shrink to…",
             "X-KDE-Priority=TopLevel",
@@ -503,14 +503,10 @@ class ThunarIntegrator:
             ).text = f"Shrink file to at most {label}"
             patterns = (
                 "*.jpg;*.jpeg;*.png;*.webp;*.heic;*.avif;*.pdf;"
-                "*.mp4;*.mov;*.mkv;*.webm;*.avi;*.mp3;*.m4a;*.aac;*.opus;*.ogg;*.flac;*.wav;"
-                "*.JPG;*.JPEG;*.PNG;*.WEBP;*.HEIC;*.AVIF;*.PDF;"
-                "*.MP4;*.MOV;*.MKV;*.WEBM;*.AVI;*.MP3;*.M4A;*.AAC;*.OPUS;*.OGG;*.FLAC;*.WAV"
+                "*.JPG;*.JPEG;*.PNG;*.WEBP;*.HEIC;*.AVIF;*.PDF"
             )
             ET.SubElement(action, "patterns").text = patterns
             ET.SubElement(action, "image-files")
-            ET.SubElement(action, "audio-files")
-            ET.SubElement(action, "video-files")
             ET.SubElement(action, "other-files")
 
         tree.write(self.uca_file, encoding="utf-8", xml_declaration=True)

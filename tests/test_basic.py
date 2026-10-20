@@ -71,8 +71,10 @@ def test_cli_doctor_mock_which(
     output = capsys.readouterr().out
     assert "✓ Python" in output
     assert "✗ uv" in output
-    assert "✗ ffmpeg" in output
-    assert "✗ ffprobe" in output
+    assert "ffmpeg (optional" in output
+    assert "ffprobe (optional" in output
+    assert "✗ ffmpeg" not in output
+    assert "✗ ffprobe" not in output
     assert "✗ gs" in output
     assert "✗ qpdf" in output
     assert "✗ git" in output

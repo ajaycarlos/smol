@@ -617,21 +617,21 @@ def test_donut_render_all_visual_states(qapp, samples_dir, tmp_path):
     win_dim.close()
 
 
-def test_donut_esc_cancels_active_worker(qapp, tmp_path: Path):
+def test_donut_esc_cancels_active_worker(qapp, samples_dir: Path, tmp_path: Path):
     """Pressing Esc while donut is shrinking cancels the worker and closes window."""
+    import shutil
+
     from PySide6.QtCore import QEvent
     from PySide6.QtGui import QKeyEvent
 
-    from tests.core.test_video import _generate_synthetic_video
+    img_path = tmp_path / "donut_esc_test.jpg"
+    shutil.copy(samples_dir / "portrait.jpg", img_path)
 
-    video_path = tmp_path / "donut_esc_test.mp4"
-    _generate_synthetic_video(video_path, duration=6.0, width=640, height=360)
-
-    win = DonutWindow([video_path])
+    win = DonutWindow([img_path])
     win.show()
 
-    # Start shrink
-    win.start_shrink(target_bytes=300_000)
+    # Start shrink with pacing enabled so worker is active
+    win.start_shrink(target_bytes=50_000)
     assert win._shrink_worker is not None
     assert win._shrink_worker.isRunning()
 
@@ -649,7 +649,7 @@ def test_donut_esc_cancels_active_worker(qapp, tmp_path: Path):
     assert not win._shrink_worker.isRunning()
 
     # No partial output file
-    outputs = list(tmp_path.glob("donut_esc_test*.mp4"))
-    assert outputs == [video_path]
+    outputs = list(tmp_path.glob("donut_esc_test_50KB*.jpg"))
+    assert len(outputs) == 0
     win.close()
 

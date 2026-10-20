@@ -24,10 +24,7 @@ Image.init()
 
 
 class ShrinkWorker(QThread):
-    """QThread worker executing image, PDF, video, and audio compression
-    off the UI thread.
-    """
-
+    """QThread worker executing image and PDF compression off the UI thread."""
 
     # progress(current_1_based, total_files, status_or_filename)
     progress = Signal(int, int, str)
@@ -62,7 +59,7 @@ class ShrinkWorker(QThread):
         self._proc_lock = threading.Lock()
 
     def cancel(self) -> None:
-        """Request cooperative cancellation and kill active ffmpeg subprocess."""
+        """Request cooperative cancellation and kill active child subprocess."""
         self._is_cancelled = True
         with self._proc_lock:
             if self._active_proc is not None:
