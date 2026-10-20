@@ -389,7 +389,12 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
   - Custom popup: Upgraded `CustomInputDialog` listing favourites and recents with Up/Down arrow + Enter navigation, floor validation ("Smallest I can make this is about {floor}"), and LRU recents recording.
   - Settings window: Added Ladder editor (max 7), Favourites editor (max 12), and Donut Ring Mode switch ("Classic ring" vs "Smart ring") with full validation.
   - Result Provenance: Added `size_source` field (`"estimate"` | `"predicted"` | `"verified"`) in `Result` and exposed in `smol shrink --json`.
-  - VERIFY: Full test suite passes (391 tests); ruff clean; legacy `config.toml` load creates `.bak`; screenshots of donut captured for 1.2 MB, 12 KB, and 40 MB files in both Classic and Smart mode in `screenshots/verification/`.
+- Spike D: DragEnter / DragMove / Drop Data Inspection spike (`spikes/d_dragenter_data.py`):
+  - Created PySide6 always-on-top window measuring MIME formats, `hasUrls()`, URL extraction, and inspection latency in milliseconds across `dragEnterEvent`, `dragMoveEvent`, and `dropEvent`.
+  - Tested 6 cases: (1) one file from Nemo, (2) several files, (3) a folder, (4) file from inside archive manager, (5) mounted network/phone location, (6) image dragged from web browser.
+  - Results: For all 6 cases, URLs are available immediately at ENTER (<0.04 ms) and at MOVE (<0.01 ms), NOT only at drop. Sub-millisecond URL inspection allows instant early validation before drop.
+  - Added unit test suite in `tests/test_spike_d.py` (7 tests).
+  - VERIFY: `uv run python spikes/d_dragenter_data.py` verified all 6 cases; all 398 tests pass; ruff clean.
 
 ## Next
 - Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
