@@ -58,6 +58,7 @@ class ToastWindow(QWidget):
         cursor_pos: QPoint | None = None,
         reduce_motion: bool = False,
         auto_hide_ms: int = 6000,
+        skipped_files: list[Path | str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -65,6 +66,7 @@ class ToastWindow(QWidget):
         self.cursor_pos = cursor_pos
         self.reduce_motion = reduce_motion
         self.auto_hide_ms = auto_hide_ms
+        self.skipped_files = [Path(f) for f in (skipped_files or [])]
 
         self._is_hovered: bool = False
         self._undone: bool = False
@@ -249,7 +251,7 @@ class ToastWindow(QWidget):
             orig_sz = format_size(res.original_bytes, spaced=True)
             final_sz = format_size(res.final_bytes, spaced=True)
             # "photo.jpg  1.02 MB → 97 KB"
-            return (
+            msg = (
                 f"<span style='color: #ffffff; font-weight: 700; font-size: 13px;'>"
                 f"{src.name}</span> &nbsp;&nbsp; "
                 f"<span style='color: #94a3b8; font-size: 12px;'>{orig_sz}</span> "
@@ -263,7 +265,7 @@ class ToastWindow(QWidget):
             orig_sz = format_size(tot_orig, spaced=True)
             final_sz = format_size(tot_final, spaced=True)
             count = len(shrunk_items)
-            return (
+            msg = (
                 f"<span style='color: #ffffff; font-weight: 700; font-size: 13px;'>"
                 f"{count} files</span> &nbsp;&nbsp; "
                 f"<span style='color: #94a3b8; font-size: 12px;'>{orig_sz}</span> "
@@ -274,17 +276,26 @@ class ToastWindow(QWidget):
         elif small_items:
             src, res = small_items[0]
             sz = format_size(res.original_bytes, spaced=True)
-            return (
+            msg = (
                 f"<span style='color: #ffffff; font-weight: 700; font-size: 13px;'>"
                 f"{src.name}</span> &nbsp;&nbsp; "
                 f"<span style='color: #34d399; font-weight: 600; font-size: 12px;'>"
                 f"Already ≤ target ({sz})</span>"
             )
         else:
-            return (
+            msg = (
                 "<span style='color: #ffffff; font-weight: 700; font-size: 13px;'>"
                 "Completed</span>"
             )
+
+        if self.skipped_files:
+            skipped_names = ", ".join(f.name for f in self.skipped_files)
+            msg += (
+                f"<br><span style='color: #f87171; font-size: 11px;'>"
+                f"Skipped: {skipped_names}</span>"
+            )
+
+        return msg
 
     def _init_timer(self) -> None:
         """Initialize the 6-second auto-hide timer."""

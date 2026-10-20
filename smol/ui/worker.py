@@ -16,11 +16,49 @@ from typing import Any
 from PIL import Image
 from PySide6.QtCore import QObject, QThread, Signal
 
+from smol.core.classify import classify_files
 from smol.core.result import Result
 from smol.core.router import shrink_file
 
 # Pre-initialize Pillow plugins to prevent import deadlocks in secondary threads
 Image.init()
+
+
+class ClassificationWorker(QThread):
+    """QThread worker executing file classification off the UI thread."""
+
+    classified = Signal(object)  # emits BatchClassification
+
+    def __init__(
+        self,
+        paths: Sequence[Path | str],
+        sleep_stub: float = 0.0,
+        parent: QObject | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.paths = list(paths)
+        self.sleep_stub = sleep_stub
+        self._is_cancelled = False
+
+    def cancel(self) -> None:
+        """Cooperatively cancel classification."""
+        self._is_cancelled = True
+
+    def run(self) -> None:
+        """Classify files in background thread."""
+        if self.sleep_stub > 0:
+            elapsed = 0.0
+            while elapsed < self.sleep_stub:
+                if self._is_cancelled:
+                    return
+                step = min(0.02, self.sleep_stub - elapsed)
+                time.sleep(step)
+                elapsed += step
+        if self._is_cancelled:
+            return
+        batch = classify_files(self.paths)
+        if not self._is_cancelled:
+            self.classified.emit(batch)
 
 
 class ShrinkWorker(QThread):
@@ -132,4 +170,3 @@ class ShrinkWorker(QThread):
 
         if not self._is_cancelled:
             self.results_ready.emit(results)
-

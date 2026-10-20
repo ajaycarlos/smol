@@ -402,10 +402,29 @@ v1.0 Sequence — Q0 (Platform seam & Wayland guard).
     * Case 5 (Mounted phone / MTP on GVFS): URLs available at ENTER (0.31 ms) and MOVE (0.31–2.20 ms) with valid `/run/user/1000/gvfs/mtp:...` path, NOT only at DROP.
     * Case 6 (Web browser / Chromium): URLs available at ENTER (0.36 ms) and MOVE (0.40–0.48 ms) as `data:image/jpeg;base64,...` (with `isLocalFile() == False`), NOT only at DROP.
   - Read latency for standard URL extractions is consistently <1.5 ms (<2.5 ms max on GVFS). All 398 tests pass; ruff clean.
+- Implement pre-drop classification and Donut drag-enter states (A2 / A4.1):
+  - Created `smol/core/classify.py` with `classify(path)` and `classify_files(paths)`:
+    * Refuses non-regular files (FIFOs, sockets, character/block devices) using `os.lstat` before opening. Refuses broken symlinks and symlinks targeting non-regular files.
+    * Sniffs header first (max 32 bytes) for JPEG, PNG, WebP, PDF, GIF, HEIF, TIFF, BMP, and ZIP/DOCX/ODT archives; falls back to extension second; trusts header on mismatch (e.g., PDF renamed to `.jpg`).
+    * Identifies directories as `kind="folder"`, `reason="folder, not supported"`. Ignores non-`file://` remote URIs as `kind="remote"`.
+    * Never decodes images during classification.
+    * Caps batch inspection at 50 files; marks remainder as `+N more` (unknown).
+  - Background classification worker (`ClassificationWorker` in `smol/ui/worker.py`):
+    * Runs classification off the UI thread with cooperative cancellation (`sleep_stub` for testability).
+  - Donut pre-drop drag-enter feedback (`DonutWindow` in `smol/ui/donut_window.py`):
+    * Initiates background classification with a 300 ms timeout timer on `dragEnterEvent`.
+    * Implements 4 distinct states:
+      1. `all_supported`: Segments active; normal hover predictions.
+      2. `none_supported`: Center card displays failure reason (e.g., "Unsupported file type (.docx)" or "folder, not supported"); all segments dimmed; mouse moves over segments display `ForbiddenCursor`; drops are ignored/rejected.
+      3. `mixed`: Center card displays summary (e.g., "X of Y supported, Z will be skipped"); segments active; drop queues only supported files; completion toast displays skipped files by name (`Skipped: notes.docx`).
+      4. `unknown`: Center card displays neutral "Checking..."; segments active; falls back to full classification at drop time.
+    * Handles archive drops (e.g. Archive Manager / File Roller where URLs are not available at drag-enter) cleanly by entering neutral "Checking..." state and classifying at drop time when URLs arrive.
+  - Comprehensive unit test suite in `tests/core/test_classify.py` (8 tests) and `tests/ui/test_donut_classify.py` (6 tests).
+  - End-to-end verification script `scripts/verify_predrop_classify.py` covering all 5 core cases. All 411 tests pass; ruff clean.
 
 ## Next
 - Q0: Wayland guard (fail fast with helpful message on Wayland hold-key attempt).
-- A2 to A5, feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
+- A5 (Settings UI alignment), feature freeze, P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.

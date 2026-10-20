@@ -34,6 +34,7 @@ from PySide6.QtCore import (
     QRectF,
     Qt,
     QThread,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import (
@@ -59,6 +60,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QWidget
 
+from smol.core.classify import BatchClassification, classify_files
 from smol.core.config import get_reduce_motion
 from smol.core.result import Result
 from smol.core.size import format_size, parse_size
@@ -66,7 +68,7 @@ from smol.ui.custom_input import CustomInputDialog
 from smol.ui.donut_geometry import DonutGeometry
 from smol.ui.prediction import Prediction, PredictionService
 from smol.ui.toast import ToastWindow
-from smol.ui.worker import ShrinkWorker
+from smol.ui.worker import ClassificationWorker, ShrinkWorker
 
 logger = logging.getLogger(__name__)
 Image.init()
@@ -464,6 +466,16 @@ class DonutWindow(QWidget):
         self._checkmark_burst: float = 0.0
         self._anim_checkmark_burst: QPropertyAnimation | None = None
         self._toast: ToastWindow | None = None
+        self.last_skipped_files: list[Path] = []
+
+        # Pre-drop classification state
+        self.drag_classify_state: str | None = None
+        self.center_classify_message: str | None = None
+        self.all_segments_dimmed: bool = False
+        self._current_classification: BatchClassification | None = None
+        self._classification_worker: ClassificationWorker | None = None
+        self._classify_timer: QTimer | None = None
+        self._classify_timed_out: bool = False
 
         # Build segment items with dimming logic and geometry
         self._init_segments()
@@ -599,9 +611,9 @@ class DonutWindow(QWidget):
         )
 
         limited = suggestions[:7]
-        self.segments_config = (
-            [(s.label, s.bytes) for s in limited] + [("Custom…", None)]
-        )
+        self.segments_config = [(s.label, s.bytes) for s in limited] + [
+            ("Custom…", None)
+        ]
         self.geometry_calc = DonutGeometry(
             n_segments=len(self.segments_config),
             inner_radius=self.inner_radius,
@@ -1015,9 +1027,23 @@ class DonutWindow(QWidget):
         self.retry_target_bytes = None
         self._retry_rect = None
         self._hovered_idx = None
-        self._current_prediction = None
         self._fading_prediction = None
         self._prediction_opacity = 0.0
+        if (
+            self._classification_worker is not None
+            and self._classification_worker.isRunning()
+        ):
+            self._classification_worker.cancel()
+            self._classification_worker.wait(100)
+            self._classification_worker = None
+        if self._classify_timer is not None and self._classify_timer.isActive():
+            self._classify_timer.stop()
+        self.drag_classify_state = None
+        self.center_classify_message = None
+        self.all_segments_dimmed = False
+        self.last_skipped_files = []
+        self._current_classification = None
+        self._classify_timed_out = False
         self.file_paths = []
         self._init_file_data()
         self._init_segments()
@@ -1182,6 +1208,12 @@ class DonutWindow(QWidget):
         if self._shrink_worker is not None and self._shrink_worker.isRunning():
             self._shrink_worker.cancel()
             self._shrink_worker.wait(300)
+        if (
+            self._classification_worker is not None
+            and self._classification_worker.isRunning()
+        ):
+            self._classification_worker.cancel()
+            self._classification_worker.wait(300)
         super().closeEvent(event)
 
     def __del__(self) -> None:
@@ -1190,6 +1222,10 @@ class DonutWindow(QWidget):
             if worker is not None and worker.isRunning():
                 worker.cancel()
                 worker.wait(500)
+            class_worker = getattr(self, "_classification_worker", None)
+            if class_worker is not None and class_worker.isRunning():
+                class_worker.cancel()
+                class_worker.wait(500)
         except (RuntimeError, AttributeError):
             pass
 
@@ -1198,31 +1234,143 @@ class DonutWindow(QWidget):
         return parse_drop_uris(mime_data)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Accept drag if it contains URLs or text/uri-list."""
+        """Accept drag and trigger pre-drop classification (300 ms timeout)."""
         mime = event.mimeData()
-        if mime.hasUrls() or mime.hasFormat("text/uri-list"):
-            event.acceptProposedAction()
-        else:
+        if not (mime.hasUrls() or mime.hasFormat("text/uri-list")):
             event.ignore()
+            return
+
+        event.acceptProposedAction()
+
+        # Extract dragged paths/URIs
+        paths: list[str] = []
+        if mime.hasUrls():
+            for u in mime.urls():
+                if u.isLocalFile():
+                    paths.append(u.toLocalFile())
+                else:
+                    paths.append(u.toString())
+        elif mime.hasFormat("text/uri-list") or mime.hasText():
+            paths = [str(p) for p in self._parse_drop_uris(mime)]
+
+        if not paths:
+            # URLs not yet available (e.g. Archive Manager), show neutral Checking...
+            self.drag_classify_state = "unknown"
+            self.center_classify_message = "Checking..."
+            self.all_segments_dimmed = False
+            self.update()
+            return
+
+        # Cancel any previous classification worker or timer
+        if self._classification_worker and self._classification_worker.isRunning():
+            self._classification_worker.cancel()
+            self._classification_worker.wait(100)
+            self._classification_worker = None
+        if self._classify_timer and self._classify_timer.isActive():
+            self._classify_timer.stop()
+
+        self._classify_timed_out = False
+        self._current_classification = None
+        self.drag_classify_state = "unknown"
+        self.center_classify_message = "Checking..."
+        self.all_segments_dimmed = False
+        self.update()
+
+        # 300 ms timeout timer
+        self._classify_timer = QTimer(self)
+        self._classify_timer.setSingleShot(True)
+        self._classify_timer.setInterval(300)
+        self._classify_timer.timeout.connect(self._on_classify_timeout)
+        self._classify_timer.start()
+
+        # Background worker thread
+        self._classification_worker = ClassificationWorker(paths, parent=self)
+        self._classification_worker.classified.connect(self._on_classified)
+        self._classification_worker.start()
+
+    def _on_classify_timeout(self) -> None:
+        """Handle 300 ms classification timeout: enter neutral 'Checking...' state."""
+        if self._current_classification is None:
+            self._classify_timed_out = True
+            self.drag_classify_state = "unknown"
+            self.center_classify_message = "Checking..."
+            self.all_segments_dimmed = False
+            self.update()
+
+    def _on_classified(self, batch: BatchClassification) -> None:
+        """Receive classification batch results and update pre-drop states."""
+        if self._classify_timer and self._classify_timer.isActive():
+            self._classify_timer.stop()
+
+        self._current_classification = batch
+        if self._classify_timed_out:
+            return
+
+        if batch.none_supported:
+            self.drag_classify_state = "none_supported"
+            first = batch.items[0] if batch.items else None
+            self.center_classify_message = (
+                first.reason if first and first.reason else "Unsupported file type"
+            )
+            self.all_segments_dimmed = True
+        elif batch.mixed:
+            self.drag_classify_state = "mixed"
+            sup_cnt = len(batch.supported_items)
+            skip_cnt = len(batch.unsupported_items)
+            tot_cnt = batch.total_count
+            self.center_classify_message = (
+                f"{sup_cnt} of {tot_cnt} supported, {skip_cnt} will be skipped"
+            )
+            self.all_segments_dimmed = False
+        elif batch.has_unknown:
+            self.drag_classify_state = "unknown"
+            self.center_classify_message = "Checking..."
+            self.all_segments_dimmed = False
+        else:
+            self.drag_classify_state = "all_supported"
+            self.center_classify_message = None
+            self.all_segments_dimmed = False
+
+        self.update()
 
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
-        """Track segment under cursor during drag."""
+        """Track segment under cursor during drag, rejecting when none supported."""
         center = self.rect().center()
         pos = event.position() if hasattr(event, "position") else event.pos()
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
         idx = self._segment_at(dx, dy)
+
+        if self.drag_classify_state == "none_supported":
+            if idx is not None:
+                self.setCursor(Qt.CursorShape.ForbiddenCursor)
+            else:
+                self.unsetCursor()
+            event.ignore()
+            return
+
+        self.unsetCursor()
         if idx != self._hovered_idx:
             self._set_hovered_segment(idx)
         event.acceptProposedAction()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
-        """Clear drag hover state."""
+        """Clear drag hover state and restore default classification state."""
+        self.unsetCursor()
         self._set_hovered_segment(None)
+        if self.state != "working":
+            self.drag_classify_state = None
+            self.center_classify_message = None
+            self.all_segments_dimmed = False
+            self.update()
         event.accept()
 
     def dropEvent(self, event: QDropEvent) -> None:
-        """Handle file drops onto a donut segment."""
+        """Handle file drops onto a donut segment with pre-drop filtering."""
+        if self.drag_classify_state == "none_supported":
+            event.ignore()
+            return
+
         center = self.rect().center()
         pos = event.position() if hasattr(event, "position") else event.pos()
         dx = pos.x() - center.x()
@@ -1234,8 +1382,50 @@ class DonutWindow(QWidget):
             event.ignore()
             return
 
+        # If classification wasn't available at dragEnter or timed out:
+        if (
+            self._current_classification is None
+            or self.drag_classify_state == "unknown"
+        ):
+            batch = classify_files([str(p) for p in dropped_files])
+            self._current_classification = batch
+
+        if self._current_classification is not None:
+            if self._current_classification.none_supported:
+                self.drag_classify_state = "none_supported"
+                first = (
+                    self._current_classification.items[0]
+                    if self._current_classification.items
+                    else None
+                )
+                self.center_classify_message = (
+                    first.reason if first and first.reason else "Unsupported file type"
+                )
+                self.all_segments_dimmed = True
+                self.update()
+                event.ignore()
+                return
+
+            if (
+                self._current_classification.mixed
+                or self.drag_classify_state == "mixed"
+            ):
+                supported_files = [
+                    Path(c.path) for c in self._current_classification.supported_items
+                ]
+                self.last_skipped_files = [
+                    Path(c.path) for c in self._current_classification.unsupported_items
+                ]
+                dropped_files = supported_files
+            else:
+                self.last_skipped_files = []
+
         if idx is not None:
             item = self.segments[idx]
+            if not item.enabled or self.all_segments_dimmed:
+                event.ignore()
+                return
+
             self.drop_received.emit(dropped_files)
             self._chosen_segment_idx = idx
             if item.target_bytes is not None:
@@ -1530,17 +1720,24 @@ class DonutWindow(QWidget):
         )
         self._anim_checkmark_burst.start()
 
+    def _build_completion_toast(
+        self, results: list[tuple[Path, Result]]
+    ) -> ToastWindow:
+        """Construct completion toast instance with results and skipped files."""
+        cursor_pos = QCursor.pos()
+        return ToastWindow(
+            results=results,
+            cursor_pos=cursor_pos,
+            reduce_motion=self.reduce_motion,
+            skipped_files=self.last_skipped_files,
+        )
+
     def _show_completion_toast(self, results: list[tuple[Path, Result]]) -> None:
         """Summon completion toast near cursor/corner and hide donut window."""
         if self.state != "success":
             return
 
-        cursor_pos = QCursor.pos()
-        toast = ToastWindow(
-            results=results,
-            cursor_pos=cursor_pos,
-            reduce_motion=self.reduce_motion,
-        )
+        toast = self._build_completion_toast(results)
         self._toast = toast
         toast.show()
         toast.raise_()
@@ -1742,7 +1939,8 @@ class DonutWindow(QWidget):
             # Active segments: rich deep glass tint
             # Hovered segments: bright interactive feedback
             # Dimmed segments: darker recessed tint (never brighter than active)
-            if not item.enabled:
+            is_enabled = item.enabled and not self.all_segments_dimmed
+            if not is_enabled:
                 fill_color = QColor(10, 12, 18, int(160 * seg_alpha_factor))
             else:
                 r = int(22 + (45 - 22) * hp)
@@ -1760,7 +1958,7 @@ class DonutWindow(QWidget):
             anchor_scale = 1.0 + ((scale - 1.0) * 0.5)
             anchor = center_pt + QPointF(ax * anchor_scale, ay * anchor_scale)
 
-            if hp > 0.0 and item.enabled and seg_alpha_factor > 0.1:
+            if hp > 0.0 and is_enabled and seg_alpha_factor > 0.1:
                 # Subtle hover tint wash
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QColor(255, 255, 255, int(25 * hp * seg_alpha_factor)))
@@ -1795,7 +1993,7 @@ class DonutWindow(QWidget):
 
             text_rect = QRectF(anchor.x() - 45.0, anchor.y() - 12.0, 90.0, 24.0)
 
-            if item.enabled:
+            if is_enabled:
                 label_color = QColor(255, 255, 255, int(255 * seg_alpha_factor))
                 shadow_color = QColor(0, 0, 0, int(160 * seg_alpha_factor))
             else:
@@ -2280,7 +2478,57 @@ class DonutWindow(QWidget):
                 self._retry_rect = None
 
         else:
-            # Idle state: balanced thumbnail, filename, and size / prediction
+            # Idle state: thumbnail, filename, and size / prediction / classification
+            if (
+                self.drag_classify_state == "none_supported"
+                and self.center_classify_message
+            ):
+                # Center prohibited / unsupported icon
+                icon_r = 16.0
+                icon_cy = center_y - 16.0
+                painter.setPen(QPen(QColor(248, 113, 113, 230), 2.5))
+                painter.setBrush(QColor(239, 68, 68, 35))
+                painter.drawEllipse(QPointF(center_x, icon_cy), icon_r, icon_r)
+                painter.drawLine(
+                    QPointF(center_x - 11.0, icon_cy - 11.0),
+                    QPointF(center_x + 11.0, icon_cy + 11.0),
+                )
+
+                # Center text: e.g. "Unsupported file type (.docx)"
+                font_msg = QFont()
+                font_msg.setPointSize(
+                    8.5 if len(self.center_classify_message) > 22 else 9.5
+                )
+                font_msg.setBold(True)
+                painter.setFont(font_msg)
+                fm = QFontMetrics(font_msg)
+                w = int((center_card_r - 6.0) * 2)
+                elided = fm.elidedText(
+                    self.center_classify_message, Qt.TextElideMode.ElideMiddle, w
+                )
+                rect = QRectF(center_x - center_card_r + 6.0, center_y + 8.0, w, 18.0)
+                painter.setPen(QColor(0, 0, 0, 180))
+                painter.drawText(
+                    rect.adjusted(0, 1, 0, 1), Qt.AlignmentFlag.AlignCenter, elided
+                )
+                painter.setPen(QColor(248, 113, 113, 255))
+                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, elided)
+
+                # Subtext: "Drop not allowed"
+                font_sub = QFont()
+                font_sub.setPointSize(8)
+                font_sub.setWeight(QFont.Weight.DemiBold)
+                painter.setFont(font_sub)
+                sub_rect = QRectF(
+                    center_x - center_card_r + 6.0, center_y + 28.0, w, 16.0
+                )
+                painter.setPen(QColor(160, 172, 195, 220))
+                painter.drawText(
+                    sub_rect, Qt.AlignmentFlag.AlignCenter, "Drop not allowed"
+                )
+                painter.end()
+                return
+
             max_thumb = int(min(46, center_card_r * 0.63))
             thumb_top = center_y - float(max_thumb)
             if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
@@ -2365,7 +2613,7 @@ class DonutWindow(QWidget):
             painter.setPen(QColor(255, 255, 255, 250))
             painter.drawText(name_rect, Qt.AlignmentFlag.AlignCenter, elided_name)
 
-            # File size or prediction: 9pt demibold with soft text shadow
+            # File size, prediction, or classification note: 9pt demibold with shadow
             font_size = QFont()
             font_size.setPointSize(9)
             font_size.setWeight(QFont.Weight.DemiBold)
@@ -2377,6 +2625,38 @@ class DonutWindow(QWidget):
                 (center_card_r - 6.0) * 2,
                 18.0,
             )
+
+            if (
+                self.drag_classify_state in ("mixed", "unknown")
+                and self.center_classify_message
+            ):
+                font_msg = QFont()
+                font_msg.setPointSize(
+                    8.0 if len(self.center_classify_message) > 24 else 8.5
+                )
+                font_msg.setWeight(QFont.Weight.DemiBold)
+                painter.setFont(font_msg)
+                fm_msg = QFontMetrics(font_msg)
+                w_msg = int((center_card_r - 6.0) * 2)
+                elided_msg = fm_msg.elidedText(
+                    self.center_classify_message, Qt.TextElideMode.ElideMiddle, w_msg
+                )
+
+                painter.setPen(QColor(0, 0, 0, 160))
+                painter.drawText(
+                    size_rect.adjusted(0, 1, 0, 1),
+                    Qt.AlignmentFlag.AlignCenter,
+                    elided_msg,
+                )
+                col = (
+                    QColor(251, 191, 36)
+                    if self.drag_classify_state == "mixed"
+                    else QColor(56, 189, 248)
+                )
+                painter.setPen(col)
+                painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, elided_msg)
+                painter.end()
+                return
 
             pred = self._current_prediction or self._fading_prediction
             active_text = None
