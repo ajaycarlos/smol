@@ -455,6 +455,13 @@ P10.1 Security audit and hardening (complete); ready for packaging and v1.0 rele
     - Collision & symlink safety: `output_path` checks `(candidate.exists() or candidate.is_symlink())` to prevent symlink and dangling symlink overwrites.
     - Audit checklist verified: zero `shell=True` / `os.system`; daemon single-instance locking; config/favourites caps; Wayland guard exit code 3; zero leftover media/ffmpeg in core; undo deletes only output files.
     - Updated `SECURITY.md` and added test coverage across all gap areas (443 total tests passing, 0 ruff errors).
+- Clean `uv tool install .` installation, `install.sh`, and `uninstall.sh`:
+  - Added package metadata to `pyproject.toml` (`readme`, `license`, `build/` to `.gitignore`).
+  - Updated `smol doctor` in `smol/cli.py` to print exact dependency installation hints for Debian/Ubuntu/Mint (`sudo apt install ghostscript qpdf libxcb-cursor0`).
+  - Added `install.sh`: checks external dependencies (`gs`, `qpdf`), installs tool via `uv tool install --force .`, runs `smol doctor`, interactively offers right-click file-manager integration and autostart (autostart enabled only on X11 sessions, gracefully skipped with notice on Wayland), and explains uninstallation.
+  - Added `uninstall.sh`: stops running daemon, removes right-click integrations and autostart entry, uninstalls CLI tool, and preserves configuration in `~/.config/smol` unless `--purge` is passed (purges config, state, and cache).
+  - Added test suite in `tests/test_install_scripts.py` (6 tests).
+  - VERIFY: Clean virtual environment installation verified; `smol doctor` runs cleanly; `install.sh` and `uninstall.sh` verified with integration removal and config preservation/purge; full test suite passes (449 tests); `uv run ruff check .` clean.
 
 ## Next
 - Packaging (AppImage + .deb), docs, CI, QA, v1.0 release.

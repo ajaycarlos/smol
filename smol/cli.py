@@ -95,8 +95,22 @@ def doctor() -> int:
                 "or pip install uv"
             ),
         ),
-        ("gs (Ghostscript)", "gs", "install ghostscript: sudo apt install ghostscript"),
-        ("qpdf", "qpdf", "install qpdf: sudo apt install qpdf"),
+        (
+            "gs (Ghostscript)",
+            "gs",
+            (
+                "install ghostscript: sudo apt install ghostscript "
+                "(Debian/Ubuntu/Mint: sudo apt install ghostscript qpdf libxcb-cursor0)"
+            ),
+        ),
+        (
+            "qpdf",
+            "qpdf",
+            (
+                "install qpdf: sudo apt install qpdf "
+                "(Debian/Ubuntu/Mint: sudo apt install ghostscript qpdf libxcb-cursor0)"
+            ),
+        ),
         ("git", "git", "install git: sudo apt install git"),
     ]
     for label, binary, hint in tools:

@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "smol"
 version = "0.9.0"
 description = "Shrink any file to at most a chosen size"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "Pillow>=10.0.0",
