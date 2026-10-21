@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-Packaging complete (AppImage and .deb); ready for documentation, CI, QA, and v1.0 release.
+Documentation complete; ready for CI, QA, and v1.0 release.
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -489,9 +489,27 @@ Packaging complete (AppImage and .deb); ready for documentation, CI, QA, and v1.
   - Documented release compatibility baseline: host builds against glibc 2.39 (Noble); official CI release builds must run on Ubuntu 22.04 LTS (Jammy, glibc 2.35) or older for maximum distro compatibility.
   - Added unit test suite in `tests/test_deb_packaging.py` (4 tests).
   - VERIFY: `dpkg-deb -I` and `-c` verified; local installation, version check, desktop entry/icon inspection, and removal all verified; all 453 unit tests pass; `ruff check .` clean.
+- Comprehensive documentation, architecture guide, and decision records:
+  - Authored user-friendly `README.md` covering:
+    * Core premise, offline/private nature, and output $\le$ target byte guarantee.
+    * Demo GIF placeholder (`assets/demo-placeholder.png` and `smol donut --demo`).
+    * Clear "Requirements" box highlighting that the hold-key donut overlay requires an **X11 desktop session** (Cinnamon, MATE, Xfce, or selecting an X11/Xorg session at login), while right-click context menus and CLI commands work on **any session** (X11 or Wayland).
+    * External tool dependencies (`ghostscript`, `qpdf`), PySide6 cursor dependency (`libxcb-cursor0`), and FUSE requirement for AppImage (`libfuse2t64` / `libfuse2`).
+    * Installation methods: AppImage standalone, Debian `.deb` package, `uv tool install .`, and virtualenv.
+    * Usage flows: hold-key donut overlay, right-click file manager actions, and CLI commands.
+    * Detailed trigger key explanation for `Super` and rationale why plain `Ctrl` is not used (collision with file manager "copy file" drag gesture; plain `Alt` moves windows).
+    * Classic fixed ring (default, builds muscle memory) vs. smart ring (opt-in).
+    * Settings UI and configuration file schema (`~/.config/smol/config.toml`).
+    * Supported formats (JPEG, PNG, WebP, HEIC/AVIF input, and PDF) and honest limits (incompressible data floors, 200 px minimum dimension floor, text-only vector PDFs, smallest achievable size reporting).
+    * Troubleshooting guide: `smol doctor`, `smol daemon logs`, Wayland detection, AppImage FUSE, PySide6 XCB cursor.
+    * Clean uninstallation instructions for integrations, packages, and config.
+    * "Not supported yet" roadmap section covering video, audio, Office documents, Windows (pointing to `BACKLOG.md`).
+  - Added `docs/ARCHITECTURE.md`: single-page architectural breakdown with text diagrams, subsystem matrix, compression pipelines (image quality search / Lanczos downscale ladder, Ghostscript PDF ladder + qpdf), and safety invariants.
+  - Added `docs/decisions/` directory with `README.md` and short decision records (D-001 through D-014) explaining rationale and pointing to the authoritative `DECISIONS.md`.
+  - VERIFY: Commands, doctor check, dry-run, JSON output, integrate status, autostart status, help text, and test suite (453 passed, ruff clean) verified.
 
 ## Next
-- Documentation, man pages, user guide, CI, QA, v1.0 release.
+- CI test & build pipeline, final manual QA checklist, and v1.0 release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.

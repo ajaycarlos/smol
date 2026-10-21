@@ -1,93 +1,191 @@
 # smol
 
-> Shrink any file to at most a chosen size. Offline, private, and honest.
+> **Shrink any file to at most a chosen size.**
+> Hold a key, drag a file, drop it on a size in a donut menu at the cursor. Offline, private, and honest.
 
-`smol` is a Linux-first desktop utility that compresses files to fit strict size limits (like upload forms requiring images under 100 KB) without degrading quality more than necessary.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](MIT%20LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12+-green.svg)](https://www.python.org/)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux%20(X11)-orange.svg)]()
 
-- **Output guarantee**: The output is always $\le$ target bytes (using decimal 1 KB = 1,000 bytes).
-- **Non-destructive**: Your original file is never overwritten. Outputs are saved alongside as `<name>_<size>.<ext>`.
-- **Honest**: If a target cannot be reached without ruining the file below minimum dimension/quality floors, `smol` tells you honestly instead of creating an unusable file or pretending success.
-- **Offline & Private**: Zero network calls, zero tracking.
+`smol` is a Linux desktop tool that shrinks files to fit strict size limits (like a portal demanding a photo under 100 KB or a PDF under 1 MB) without opening a browser, uploading your data to third-party servers, or degrading quality more than necessary.
 
-### Supported Formats (v1.0)
-- **Images**: JPEG, PNG, WebP, HEIC (and AVIF)
-- **Documents**: PDF only
-
-*(Video and audio compression are deferred to v1.1).*
+```
+       [ Hold Super ]  +  [ Drag File ]
+                    │
+                    ▼
+           ╭─────────────────╮
+           │   20 KB   50 KB │
+     2 MB  │                 │  100 KB
+           │   [photo.jpg]   │
+     1 MB  │    (1.2 MB)     │  200 KB
+           │                 │
+           │  Custom  500 KB │
+           ╰─────────────────╯
+                    │
+           [ Drop on 100 KB ]
+                    │
+                    ▼
+       photo_100KB.jpg (98.4 KB)  ✓ Done
+```
 
 ---
 
-## Try it
+## Demo
 
-### 1. AppImage (Standalone Executable)
+<!-- DEMO_GIF_PLACEHOLDER: Replace with assets/demo.gif when screen recording is captured -->
+![smol demo walkthrough](assets/demo-placeholder.png)
 
-A self-contained AppImage is provided for Linux (x86_64), containing all Python dependencies and PySide6:
+*(To launch an interactive demo of the donut overlay on your own desktop right now, run `smol donut --demo`).*
+
+---
+
+> [!IMPORTANT]
+> ### Requirements & Session Compatibility
+>
+> | Feature | X11 Sessions | Wayland Sessions |
+> |---|---|---|
+> | **Hold-Key Donut Overlay** (`smol daemon`) | **Supported** (Default) | *Not supported in v1.0* (Requires global key & pointer grab) |
+> | **File Manager Right-Click** ("Shrink to...") | **Supported** | **Supported** |
+> | **Terminal Command-Line** (`smol shrink`) | **Supported** | **Supported** |
+> | **Interactive Settings** (`smol settings`) | **Supported** | **Supported** |
+>
+> - **Hold-key donut requires X11**: Linux desktops using native X11 (such as **Cinnamon**, **MATE**, **Xfce**, or choosing **"Ubuntu on Xorg" / "GNOME on Xorg"** at the login display manager gear icon) support the full hold-key drag-and-drop overlay.
+> - **Wayland users**: You can use the file manager right-click integration, the CLI, and the standalone `smol donut --files <file>` palette on any desktop session.
+>
+> **System Packages**:
+> - **PDF compression**: Requires `ghostscript` and `qpdf` (`sudo apt install ghostscript qpdf`).
+> - **Qt 6 / PySide6**: Requires `libxcb-cursor0` on Debian/Ubuntu (`sudo apt install libxcb-cursor0`).
+> - **AppImage users**: Ubuntu 22.04+ requires FUSE (`sudo apt install libfuse2t64` or `libfuse2`).
+
+---
+
+## Core Promises (Engine Invariants)
+
+1. **Output is always $\le$ target bytes**: 1 KB = 1,000 bytes (decimal standard, safe for upload forms using 1,000 or 1,024). `smol` aims for 92–99% of the target, never over it.
+2. **Original files are NEVER modified or overwritten**: The output is saved next to the original as `<name>_<size>.<ext>` (e.g. `portrait_100KB.jpg`). If a file already exists, it adds `-1`, `-2`.
+3. **Honest failure**: If reaching a target would degrade the image below minimum dimension floors (200 px) or quality floors, `smol` fails honestly, reports the smallest achievable size, and lets you retry at that size. It never creates an oversized file and calls it success.
+4. **100% Offline & Private**: Zero network calls, zero analytics, zero external API dependencies. All processing happens locally on your CPU.
+5. **Format preservation**: Keeps input format by default (JPEG $\to$ JPEG, PNG $\to$ PNG, WebP $\to$ WebP, PDF $\to$ PDF). Metadata and GPS tags are stripped by default for privacy.
+
+---
+
+## Installation
+
+Choose the installation method that suits your workflow:
+
+### Option 1: Standalone AppImage (Recommended for testing)
+
+No Python setup required. Download the pre-built x86_64 AppImage from the releases:
 
 ```bash
-# Make executable and run
+# 1. Install system dependencies (PDF tools + FUSE)
+sudo apt update && sudo apt install -y ghostscript qpdf libxcb-cursor0 libfuse2t64
+
+# 2. Make executable
 chmod +x smol-0.9.0-x86_64.AppImage
+
+# 3. Test run
 ./smol-0.9.0-x86_64.AppImage --version
-./smol-0.9.0-x86_64.AppImage donut --demo
-./smol-0.9.0-x86_64.AppImage shrink photo.jpg --max 100KB
+./smol-0.9.0-x86_64.AppImage doctor
 ```
 
-#### FUSE Requirement (Ubuntu 22.04+)
-AppImages require FUSE 2 to mount. On Ubuntu 22.04, 24.04+, and newer Debian/Mint systems, install `libfuse2`:
-```bash
-sudo apt install libfuse2t64   # Ubuntu 24.04+ / Debian 13
-# or: sudo apt install libfuse2  # Ubuntu 22.04 / Debian 12
-```
+> [!NOTE]
+> If FUSE is unavailable (e.g., inside Docker, WSL, or minimal live environments), run with:
+> `./smol-0.9.0-x86_64.AppImage --appimage-extract-and-run <command>`
 
-#### Fallback Without FUSE (`--appimage-extract-and-run`)
-If FUSE is unavailable (e.g., inside containers, CI environments, or live USBs), use the built-in fallback:
-```bash
-./smol-0.9.0-x86_64.AppImage --appimage-extract-and-run <command>
-```
+### Option 2: Debian / Ubuntu Package (`.deb`)
 
-#### External Tools (Ghostscript & qpdf)
-Ghostscript (`gs`) and `qpdf` are **not bundled** inside the AppImage. To shrink PDF files, install them via your package manager:
-```bash
-sudo apt install ghostscript qpdf
-```
-Run `./smol-0.9.0-x86_64.AppImage doctor` to verify system tool availability.
-
-### 2. Manual Installation via uv / Python
+Install system-wide with standard package management:
 
 ```bash
-# Clone and enter directory
-cd smol
+# 1. Install runtime dependencies
+sudo apt update && sudo apt install -y ghostscript qpdf libxcb-cursor0
 
-# Create virtual environment and install in editable mode
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+# 2. Install the package
+sudo dpkg -i dist/smol_0.9.0_amd64.deb || sudo apt install -f -y
 
-# Check environment, dependencies, and file manager detection
+# 3. Verify
+smol --version
 smol doctor
 ```
 
-### 3. Right-Click File Manager Integration
+This installs `/opt/smol/`, symlinks `/usr/bin/smol`, registers desktop entries in `/usr/share/applications/`, and installs application icons into `/usr/share/icons/hicolor/`.
 
-Install right-click actions for your file manager (supports **Nemo**, **Nautilus**, **Dolphin**, and **Thunar**):
+### Option 3: via `uv` or Python Virtual Environment
+
+If you develop with Python or prefer isolated user-space tools:
 
 ```bash
-# Install "Shrink to..." submenu actions
+# Option A: Install as an isolated user tool with uv
+uv tool install .
+
+# Option B: Clone and run in a virtualenv
+git clone https://github.com/your-username/smol.git
+cd smol
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
+
+### Option 4: Quick-Install Script
+
+The repository includes a helper installation script:
+
+```bash
+./install.sh
+```
+
+---
+
+## Usage
+
+`smol` offers three distinct interaction paths:
+
+### 1. The Hold-Key Donut Overlay (X11)
+
+The fastest way to compress a file:
+
+1. **Hold the trigger key** (Default: `Super` / Windows key).
+2. **Drag a file** in your file manager (e.g., Nemo, Nautilus, Dolphin, Thunar).
+3. The liquid-glass donut menu summons under your cursor within 25 ms.
+4. **Hover** over any target segment to preview predicted size and resolution (e.g., `~96 KB, 800×600`). Segments larger than the input file are dimmed.
+5. **Drop the file** onto your chosen size segment (or drop onto **Custom...** for a specific byte count).
+6. A live circular countdown shows compression progress.
+7. Upon completion, a non-intrusive toast notification appears with:
+   - **Open folder**: Reveals the new file in your file manager.
+   - **Copy path**: Copies the absolute path to your clipboard.
+   - **Undo**: Safely deletes the generated file (the original is never touched).
+
+*(Press `Esc` at any time to dismiss the donut).*
+
+### 2. Right-Click Context Menu Integration
+
+Work directly from your desktop file manager without running background listeners:
+
+```bash
+# Install "Shrink to..." submenu in your file manager
 smol integrate install
 
-# Verify integration status
+# Check status
 smol integrate status
 ```
 
-Now simply right-click any image in your file manager, select **Shrink to...**, and choose a target size (e.g. `100 KB`). A desktop notification appears showing the before and after sizes.
+Supported file managers:
+- **Nemo** (Cinnamon)
+- **Nautilus** (GNOME)
+- **Dolphin** (KDE Plasma)
+- **Thunar** (Xfce)
 
-To remove right-click actions cleanly at any time:
+Right-click any image or PDF, open the **Shrink to...** menu, and select your target size (e.g., `100 KB`). A desktop notification reports the before and after sizes.
+
+To remove right-click actions cleanly:
 ```bash
 smol integrate uninstall
 ```
 
-### 4. CLI Examples (`smol shrink`)
+### 3. Command Line (`smol shrink`)
 
-You can also shrink images directly from your terminal:
+Use `smol` directly in scripts, terminals, or automation pipelines:
 
 ```bash
 # Shrink an image to under 100 KB
@@ -96,31 +194,200 @@ smol shrink photo.jpg --max 100KB
 # Shrink multiple images with desktop notifications
 smol shrink *.jpg --max 200KB --notify
 
-# Allow conversion (e.g. fallback from PNG to JPEG if target is unreachable in PNG)
-smol shrink screenshot.png --max 50KB --allow-convert
+# Compress a PDF document to under 1 MB
+smol shrink scanned_contract.pdf --max 1MB
 
 # Dry-run prediction without writing any files
-smol shrink banner.webp --max 500KB --dry-run
+smol shrink banner.png --max 50KB --dry-run
 
-# Output results as machine-readable JSON
-smol shrink photo.jpg --max 100KB --json
+# Allow format conversion (e.g., PNG -> JPEG if PNG cannot fit)
+smol shrink screenshot.png --max 30KB --allow-convert
 
-# Save output to a specific directory
-smol shrink photo.jpg --max 100KB --out-dir ./shrunk/
+# Machine-readable JSON output
+smol shrink portrait.jpg --max 100KB --json
+
+# Save outputs to a custom destination directory
+smol shrink photo.jpg --max 100KB --out-dir ./compressed/
 ```
 
 ---
 
-## Running Tests
+## The Trigger Key & Why Plain Ctrl is Not Used
+
+- **Default Key**: `Super` (the Windows key / Command key).
+- **Secondary Preset**: `Ctrl+Alt` (configurable in `smol settings`).
+
+### Why not plain `Ctrl`?
+In all major Linux desktop file managers (Nemo, Nautilus, Dolphin, Thunar), holding `Ctrl` while dragging a file triggers **"Copy File"** instead of move. Reusing plain `Ctrl` for summoning an overlay causes unintended file duplications across your folders.
+
+### Why not plain `Alt`?
+In Linux window managers (X11 / Xorg), `Alt + Click/Drag` is reserved for moving application windows across the screen.
+
+`Super` provides a collision-free modifier key that file managers ignore during drag gestures.
+
+---
+
+## Donut Modes: Classic Ring vs. Smart Ring
+
+You can configure the ring layout in `smol settings`:
+
+- **Classic Fixed Ring (Default)**:
+  - Stable, predictable 8-segment layout: `20 KB`, `50 KB`, `100 KB`, `200 KB`, `500 KB`, `1 MB`, `2 MB`, `Custom...`.
+  - Segments larger than the input file are dimmed.
+  - Builds physical muscle memory: 100 KB is always in the exact same physical direction from your cursor.
+- **Smart Ring (Opt-in)**:
+  - Dynamically computes and ranks target segments tailored to the dragged file's size and feasibility.
+  - Ideal for users handling wildly varying file sizes from 100 KB to 50 MB.
+
+---
+
+## Settings & Configuration
+
+Launch the liquid-glass configuration panel:
 
 ```bash
-# Run test suite
-uv run pytest
-
-# Check code formatting and linting
-uv run ruff check .
+smol settings
 ```
+
+The settings panel allows you to configure:
+- **Trigger key**: Capture any key or modifier combination with live conflict warnings.
+- **Target sizes**: Add, remove, and reorder segments on the donut ring.
+- **Output directory**: Save next to the original file (default) or send all shrunk outputs to a designated folder.
+- **Format options**: Toggle format preservation and lossy format fallback (`--allow-convert`).
+- **Privacy**: Strip GPS and camera EXIF metadata (enabled by default).
+- **Accessibility**: Enable **Reduce motion** for instant fades and zero animation delays.
+- **Autostart**: Launch the hold-key daemon automatically on desktop login.
+
+Settings are stored in standard XDG format at `~/.config/smol/config.toml`.
+
+---
+
+## Supported Formats & Honest Limits
+
+### Supported Formats (v1.0)
+
+| Format | Input | Output | Optimization Method |
+|---|---|---|---|
+| **JPEG** | `.jpg`, `.jpeg` | `.jpg` | Binary search quality (floor 60 to 95) $\to$ Lanczos downscaling ladder |
+| **PNG** | `.png` | `.png` | Palette quantization (256 $\to$ 128 $\to$ 64 colors) $\to$ downscaling |
+| **WebP** | `.webp` | `.webp` | Binary search quality $\to$ Lanczos downscaling ladder |
+| **HEIC / AVIF** | `.heic`, `.avif` | `.jpg` | Decodes via `pillow-heif` $\to$ sRGB $\to$ JPEG compression pipeline |
+| **PDF** | `.pdf` | `.pdf` | 6-rung Ghostscript DPI ladder (200 $\to$ 60 DPI) + `qpdf` stream optimization |
+
+### Honest Compression Limits
+
+`smol` does not perform "magic" that destroys files:
+1. **Minimum Dimension Floor**: Images will never be downscaled below `200 px` on their short side (configurable) to prevent creating unreadable postage stamps.
+2. **Incompressible Data**: If an image or PDF is already tightly compressed and cannot reach your target even at lowest quality and minimum dimensions, `smol` halts and reports:
+   ```
+   Smallest I can make this is ~142 KB at 200 px; try a larger target.
+   ```
+3. **Text-Only PDFs**: Vector text and fonts cannot be downsampled like raster photos. `smol` will report the smallest achievable size without corrupting vector paths.
+4. **Already Small Enough**: If a file is already smaller than the target, `smol` skips re-compression, leaving the original untouched.
+
+---
+
+## Troubleshooting
+
+### Run `smol doctor`
+Whenever something feels off, run:
+```bash
+smol doctor
+```
+`smol doctor` inspects your Python environment, display server (X11 vs Wayland), installed desktop environment, file manager, and external dependencies (`gs`, `qpdf`).
+
+### Common Issues
+
+#### 1. The donut does not appear when holding Super and dragging
+- Check your session type with `echo $XDG_SESSION_TYPE`. If it reports `wayland`, see the [Requirements](#requirements--session-compatibility) box above.
+- Verify the background daemon is running:
+  ```bash
+  smol daemon status
+  ```
+  If not running, start it with `smol daemon start`.
+- Inspect daemon activity logs:
+  ```bash
+  smol daemon logs --lines 20
+  ```
+
+#### 2. AppImage fails with `error while loading shared libraries: libfuse.so.2`
+On Ubuntu 22.04+ and Debian 12+, install the modern FUSE compatibility library:
+```bash
+sudo apt install -y libfuse2t64  # Or libfuse2
+```
+Alternatively, run without FUSE:
+```bash
+./smol-*.AppImage --appimage-extract-and-run doctor
+```
+
+#### 3. Qt / PySide6 complains about `libxcb-cursor.so.0`
+Install the missing X11 XCB cursor library:
+```bash
+sudo apt install -y libxcb-cursor0
+```
+
+#### 4. PDF compression fails with missing tool error
+Make sure Ghostscript and qpdf are installed on your host system:
+```bash
+sudo apt install -y ghostscript qpdf
+```
+
+---
+
+## Uninstallation
+
+To cleanly remove `smol` from your system:
+
+### 1. Remove File Manager & Autostart Integrations
+```bash
+smol integrate uninstall
+smol integrate autostart uninstall
+```
+
+### 2. Remove the Application
+
+- **If installed via `.deb`**:
+  ```bash
+  sudo apt remove -y smol
+  ```
+- **If installed via `uv tool`**:
+  ```bash
+  uv tool uninstall smol
+  ```
+- **If using AppImage**:
+  Simply delete the `.AppImage` file.
+- **Convenience script**:
+  ```bash
+  ./uninstall.sh
+  ```
+
+### 3. Optional: Remove User Configuration
+To remove stored custom sizes, settings, and daemon state:
+```bash
+rm -rf ~/.config/smol ~/.local/state/smol ~/.cache/smol
+```
+
+---
+
+## Not Supported Yet (Roadmap)
+
+The following features are intentionally deferred for future releases (see [BACKLOG.md](BACKLOG.md)):
+- **Video & Audio Compression**: Deferred to v1.1 to guarantee rock-solid image and PDF quality for v1.0.
+- **Office Documents**: `.docx`, `.pptx`, `.xlsx` image re-compression planned for post-v1.0.
+- **Wayland Native Hold-Key Overlay**: Waiting for standardized Wayland layer-shell / global key capture protocols.
+- **Windows Support**: Windows 10 & 11 planned for v2.0 (Windows 7/8 are unsupported).
+- **Exact Target Padding**: Artificially inflating small files to reach an exact minimum byte size is deferred to v1.3+.
+
+---
+
+## Architecture & Design Decisions
+
+- For architectural diagrams and data flows, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- For settled architectural and product design decisions, see [docs/decisions/](docs/decisions/) and [DECISIONS.md](DECISIONS.md).
+
+---
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](MIT%20LICENSE).
+See [NOTICE](NOTICE) for third-party component licenses and attributions.
