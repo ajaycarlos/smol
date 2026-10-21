@@ -274,16 +274,20 @@ Settings are stored in standard XDG format at `~/.config/smol/config.toml`.
 | **HEIC / AVIF** | `.heic`, `.avif` | `.jpg` | Decodes via `pillow-heif` $\to$ sRGB $\to$ JPEG compression pipeline |
 | **PDF** | `.pdf` | `.pdf` | 6-rung Ghostscript DPI ladder (200 $\to$ 60 DPI) + `qpdf` stream optimization |
 
-### Honest Compression Limits
+### Known Limitations & Honest Compression Limits
 
-`smol` does not perform "magic" that destroys files:
-1. **Minimum Dimension Floor**: Images will never be downscaled below `200 px` on their short side (configurable) to prevent creating unreadable postage stamps.
-2. **Incompressible Data**: If an image or PDF is already tightly compressed and cannot reach your target even at lowest quality and minimum dimensions, `smol` halts and reports:
+`smol` does not perform "magic" that destroys files, and upholds transparent limits:
+1. **X11 Requirement for Hold-Key Donut**: The hold-key donut overlay requires an X11 desktop session. On Wayland sessions, use the right-click file-manager context menu or the CLI `smol shrink` (both work on any session type).
+2. **Minimum Dimension Floor**: Images will never be downscaled below `200 px` on their short side (configurable via `--min-side` or Settings) to prevent creating unreadable postage stamps.
+3. **Incompressible Data**: If an image or PDF is already tightly compressed and cannot reach your target even at lowest quality and minimum dimensions, `smol` halts and reports honest feedback:
    ```
    Smallest I can make this is ~142 KB at 200 px; try a larger target.
    ```
-3. **Text-Only PDFs**: Vector text and fonts cannot be downsampled like raster photos. `smol` will report the smallest achievable size without corrupting vector paths.
-4. **Already Small Enough**: If a file is already smaller than the target, `smol` skips re-compression, leaving the original untouched.
+4. **Text-Only Vector PDFs**: Vector text and embedded fonts cannot be raster-downsampled. `smol` reports the smallest achievable size without corrupting vector paths.
+5. **PNG Format Preservation**: Input PNGs keep the `.png` format by default. If 64-color palette quantization cannot reach the target, use `--allow-convert` or enable it in Settings to allow fallback to JPEG.
+6. **Archive Drag Protocol**: Dragging files directly from archive managers (e.g. File Roller) does not provide file URIs at drag-enter under X11 Xdnd protocol; `smol` falls back to classifying at drop time.
+7. **Decompression Bomb Guard**: Images exceeding 89.5 million pixels are safely refused to protect system memory.
+8. **Already Small Enough**: If a file is already smaller than the target, `smol` skips re-compression, leaving the original untouched.
 
 ---
 

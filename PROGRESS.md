@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-CI test & build pipeline complete; ready for final QA and v1.0 release.
+Final QA pass complete (all checks green, 0 blockers); ready for v1.0 release.
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -513,8 +513,32 @@ CI test & build pipeline complete; ready for final QA and v1.0 release.
   - Created `.github/workflows/release.yml`: triggers on version tags (`v*`), runs on the oldest supported Ubuntu runner (`ubuntu-22.04` for glibc 2.35 compatibility), compiles AppImage (`packaging/build_appimage.sh`) and Debian package (`packaging/build_deb.sh`), generates `SHA256SUMS`, and creates a draft GitHub release via `gh release create --draft` attaching all three artifacts without publishing.
   - VERIFY: YAML syntax valid; `uv run ruff check .` passes with 0 warnings; `QT_QPA_PLATFORM=offscreen uv run pytest -m "not display"` passes (451 passed, 2 deselected); pushed to GitHub and verified CI workflow run 39560933783 went green (Lint & Test completed in 2m 2s).
 
+- Full QA checklist and regression test pass (v1.0 Sequence item 12):
+  - Verified all milestone "Done when" checks (M0–M7):
+    * M0: SPIKE.md verifies Path A (X11) adoption with empirical evidence.
+    * M1: Standard portrait photo shrinks to 99.51 KB (< 100 KB target, 99.5% window), original untouched, 18 sample files.
+    * M2: Nemo right-click integration installed in ~/.local/share/nemo/actions with 'Shrink to…' submenu in ~/.config/nemo/actions-tree.json; desktop notification reports 'photo.jpg: 1.24 MB → 99.51 KB'.
+    * M3: Standalone Donut UI verified across single and multiple files, hover prediction, and background worker off UI thread.
+    * M4: Hold-key daemon lifecycle verified (start/status/logs/stop), warm overlay latency < 25 ms, idle CPU 1.0% (~0%).
+    * M5: Animation and polish verified (ring snap, 600 ms soft checkmark burst, toast with Open folder / Undo / Copy path, reduce_motion).
+    * M6: Settings window verified (trigger key capture, ladder editor, favourites, classic vs smart ring, config persistence).
+    * M7: PDF engine verified (4.87 MB scanned PDF goes to 415.33 KB in 2 steps, qpdf --check passes with code 0).
+  - Verified v1.0 core items:
+    * Classic ring on 1.2 MB, 12 KB, and 40 MB files (dimmed segments for larger targets, floor eligibility checks).
+    * Smart ring opt-in (logarithmic spacing, DP candidate selection, relative fallbacks for small files).
+    * Pre-drop drag inspection states (none_supported with ForbiddenCursor and honest reason, mixed with summary and skipped files).
+    * Wayland session guard (refuses daemon start with exit code 3 and helpful guidance, doctor emits warning).
+    * Config migration (v1 schema upgrade, non-destructive config.toml.bak backup, user values preserved).
+    * Nemo right-click integration (safe argument quoting with '--', double quotes, submenu tree).
+    * AppImage & .deb packaging (standalone AppImage execution, FUSE fallback, .deb payload integrity and binary execution).
+    * uninstall.sh (clean removal of integrations and autostart, config preservation by default, --purge support).
+  - Verified test suite integrity:
+    * Full git history audit confirms 0 deleted or weakened tests (video/audio deferred per D-005).
+    * Full test suite: 453 passed, 0 failed, 0 skipped.
+    * Ruff linter: clean (0 warnings).
+
 ## Next
-- Final manual QA checklist and regression test pass, then v1.0 release.
+- Tag and publish v1.0 release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.
