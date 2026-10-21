@@ -432,6 +432,7 @@ def _validate_suggest_table(raw_suggest: Any) -> dict[str, Any]:
 
     # pool
     if "pool" in raw_suggest:
+        val = raw_suggest["pool"]
         if (
             isinstance(val, list)
             and len(val) > 0

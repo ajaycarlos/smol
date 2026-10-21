@@ -8,15 +8,29 @@ from smol.core.size import format_size, parse_size
 def sanitize_filename_component(name: str) -> str:
     """Sanitize a filename component.
 
-    Removes control chars, newlines, and path separators.
+    Removes control chars, newlines, and path separators, and strips whole '..'
+    or '.' path components while preserving legitimate dots in filenames
+    (e.g., 'holiday..photo.jpg', 'photo.final.jpg').
     """
-    # Replace newlines, control characters, null bytes, and path separators
-    sanitized = re.sub(r"[\r\n\x00-\x1f/\\]", "_", name)
-    # Remove leading dots to prevent hidden files or traversal artifacts
-    while sanitized.startswith("."):
-        sanitized = sanitized[1:]
-    # Remove any traversal sequences like '..'
-    sanitized = re.sub(r"\.\.+", "_", sanitized)
+    # Replace newlines, control characters, null bytes
+    sanitized = re.sub(r"[\r\n\x00-\x1f]", "_", name)
+
+    # Split by path separators to inspect components
+    parts = re.split(r"[/\\]+", sanitized)
+    clean_parts: list[str] = []
+    for part in parts:
+        part = part.strip()
+        # Drop whole traversal components
+        if part in ("..", "."):
+            continue
+        # Strip leading dots if they would create hidden file / traversal
+        while part.startswith("."):
+            part = part[1:]
+        part = part.strip()
+        if part and part not in ("..", "."):
+            clean_parts.append(part)
+
+    sanitized = "_".join(clean_parts) if clean_parts else ""
     sanitized = sanitized.strip()
     return sanitized or "file"
 
@@ -36,6 +50,7 @@ def output_path(
     On collision: `<formatted_name>-1.<ext>`, `<formatted_name>-2.<ext>`, etc.
     Never overwrites the original or any existing file.
     Guarantees no path traversal or directory escaping.
+    Guarantees no following or overwriting of existing or dangling symlinks.
     """
     src_path = Path(src)
     if isinstance(target_bytes, (int, float)):
@@ -81,14 +96,15 @@ def output_path(
 
     # Enforce strictly the final filename component (no slashes, no traversal)
     clean_name = Path(raw_filename).name
-    # Strip any remaining control chars, path separators, or traversal artifacts
-    clean_name = re.sub(r"[\r\n\x00-\x1f/\\]", "_", clean_name)
-    clean_name = re.sub(r"\.\.+", "_", clean_name).strip()
+    # Strip any remaining control chars or path separators
+    clean_name = re.sub(r"[\r\n\x00-\x1f/\\]", "_", clean_name).strip()
+    while clean_name.startswith("."):
+        clean_name = clean_name[1:].strip()
     if not clean_name or clean_name in (".", ".."):
         clean_name = f"{stem}_{size_label}{suffix}"
 
     candidate = parent / clean_name
-    if not candidate.exists():
+    if not (candidate.exists() or candidate.is_symlink()):
         return candidate
 
     collision_idx = 1
@@ -96,6 +112,6 @@ def output_path(
     cand_suffix = candidate.suffix
     while True:
         candidate = parent / f"{cand_stem}-{collision_idx}{cand_suffix}"
-        if not candidate.exists():
+        if not (candidate.exists() or candidate.is_symlink()):
             return candidate
         collision_idx += 1

@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -285,6 +286,8 @@ def shrink(argv: list[str]) -> int:
         print(json.dumps(json_data, indent=2))
     else:
         for src_path, res in results:
+            clean_name = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", src_path.name)
+            clean_name = re.sub(r"[\r\n\x00-\x1f]", " ", clean_name)
             if res.ok:
                 orig_str = format_size(res.original_bytes, spaced=True)
                 final_str = format_size(res.final_bytes, spaced=True)
@@ -307,11 +310,13 @@ def shrink(argv: list[str]) -> int:
                     inner = f"{dim_str}{q_str}".strip()
                     detail_str = f"({inner})" if inner else ""
                 if detail_str:
-                    print(f"{src_path.name}  {orig_str} → {final_str}  {detail_str}")
+                    print(f"{clean_name}  {orig_str} → {final_str}  {detail_str}")
                 else:
-                    print(f"{src_path.name}  {orig_str} → {final_str}")
+                    print(f"{clean_name}  {orig_str} → {final_str}")
             else:
-                print(f"{src_path.name}  ✗ {res.error}")
+                clean_err = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", str(res.error or ""))
+                clean_err = re.sub(r"[\r\n\x00-\x1f]", " ", clean_err)
+                print(f"{clean_name}  ✗ {clean_err}")
 
     return 0 if all(res.ok for _, res in results) else 1
 

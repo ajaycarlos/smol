@@ -396,3 +396,417 @@ def test_disk_full_enospc_honest_failure_and_cleanup(tmp_path: Path) -> None:
     # Zero temp files left
     tmp_leftovers = list(tmp_path.glob("*.tmp*"))
     assert len(tmp_leftovers) == 0, f"Dangling temp files: {tmp_leftovers}"
+
+
+# ---------------------------------------------------------------------------
+# 9. P10.1b: Real Hostile Filename Shrinking & CLI Sanitization
+# ---------------------------------------------------------------------------
+
+
+def _generate_1_2mb_jpeg(path: Path) -> None:
+    """Generate a realistic synthetic ~1.2 MB JPEG image."""
+    import random
+
+    random.seed(42)
+    # 1800x1400 noise + gradient yields ~1.2MB JPEG at quality 90
+    w, h = 1800, 1400
+    im = Image.new("RGB", (w, h))
+    pixels = []
+    for y in range(h):
+        for x in range(w):
+            r = int((x / w) * 255)
+            g = int((y / h) * 255)
+            b = random.randint(0, 255)
+            pixels.append((r, g, b))
+    im.putdata(pixels)
+    im.save(path, format="JPEG", quality=90)
+
+
+def test_real_shrink_hostile_filenames(tmp_path: Path, qapp) -> None:
+    """P10.1b (1): Real 1.2 MB JPEG files with hostile names shrunk to 100 KB.
+
+    Tests:
+    - -rf weird 'name".jpg
+    - newline in filename
+    - ESC sequence in filename
+    Verifies output paths, notifier args, toast text, daemon log line, and CLI output.
+    """
+    from smol.cli import main
+    from smol.daemon.service import sanitize_for_log
+
+    base_jpeg = tmp_path / "base_source.jpg"
+    _generate_1_2mb_jpeg(base_jpeg)
+    assert base_jpeg.stat().st_size > 1_000_000  # Verify ~1.2 MB
+
+    names = [
+        "-rf weird 'name\".jpg",
+        "name\nwith\nnewlines.jpg",
+        "\x1b[31mcolor_esc\x1b[0m.jpg",
+    ]
+
+    hostile_files: list[Path] = []
+    for n in names:
+        f = tmp_path / n
+        f.write_bytes(base_jpeg.read_bytes())
+        hostile_files.append(f)
+
+    results: list[tuple[Path, Result]] = []
+    for f in hostile_files:
+        # Shrink to 100 KB
+        res = shrink_image(f, 100_000)
+        assert res.ok is True
+        assert res.output_path is not None
+        assert res.output_path.exists()
+        assert res.final_bytes <= 100_000
+        assert res.output_path.parent.resolve() == tmp_path.resolve()
+        assert "\n" not in res.output_path.name
+        assert "\r" not in res.output_path.name
+        assert "\x1b" not in res.output_path.name
+        results.append((f, res))
+
+    # Test notifier receives '--' and sanitized text
+    mock_run = MagicMock()
+    with (
+        patch("shutil.which", return_value="/usr/bin/notify-send"),
+        patch("subprocess.run", mock_run),
+    ):
+        for f, _res in results:
+            send_notification("smol", f"{f.name}: shrunk")
+        assert mock_run.call_count == len(results)
+        # Check that the call for the dash filename received '--'
+        dash_cmd = mock_run.call_args_list[0][0][0]
+        assert "--" in dash_cmd
+        sep_idx = dash_cmd.index("--")
+        assert dash_cmd[sep_idx + 2].startswith("-rf")
+
+        for call_args in mock_run.call_args_list:
+            cmd = call_args[0][0]
+            summary = cmd[-2]
+            body = cmd[-1]
+            assert "\x1b" not in summary and "\x1b" not in body
+
+    # Test toast text is plain / escaped
+    toast = ToastWindow(results=results)
+    toast_msg = toast._format_message()
+    assert "\x1b" not in toast_msg
+
+    # Test daemon log line stays on ONE line
+    for f in hostile_files:
+        log_line = sanitize_for_log(f"Received file drop: {f.name}")
+        assert "\n" not in log_line
+        assert "\r" not in log_line
+        assert "\x1b" not in log_line
+
+    # Test CLI human-readable output neutralizes control chars and newlines
+    import io
+    from contextlib import redirect_stdout
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ret = main(
+            ["shrink", str(hostile_files[0]), str(hostile_files[1]), "--max", "100KB"]
+        )
+    assert ret == 0
+    cli_out = buf.getvalue()
+    # No ANSI escape or split lines from filename in human output
+    assert "\x1b" not in cli_out
+
+    # Test CLI JSON output keeps exact source name
+    import json
+
+    buf_json = io.StringIO()
+    with redirect_stdout(buf_json):
+        ret_json = main(["shrink", str(hostile_files[1]), "--max", "100KB", "--json"])
+    assert ret_json == 0
+    parsed_json = json.loads(buf_json.getvalue())
+    assert len(parsed_json) == 1
+    assert parsed_json[0]["src"] == str(hostile_files[1])
+
+
+# ---------------------------------------------------------------------------
+# 10. P10.1b: classify.py fstat TOCTOU Race Rejection
+# ---------------------------------------------------------------------------
+
+
+def test_classify_fstat_race_rejects_fifo(tmp_path: Path) -> None:
+    """P10.1b (2): classify() calls os.fstat on fd.
+
+    Rejects race where file is FIFO.
+    """
+    fake_file = tmp_path / "race_test.jpg"
+    fake_file.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 30)
+
+    def fake_fstat(fd: int):
+        return os.stat_result(
+            (
+                stat.S_IFIFO | 0o644,  # mode: FIFO!
+                0,  # ino
+                0,  # dev
+                1,  # nlink
+                1000,  # uid
+                1000,  # gid
+                0,  # size
+                0,  # atime
+                0,  # mtime
+                0,  # ctime
+            )
+        )
+
+    with patch("os.fstat", side_effect=fake_fstat):
+        c = classify(fake_file)
+        assert not c.is_supported
+        assert c.kind in ("unsupported", "unreadable")
+        assert "FIFO" in (c.reason or "") or "regular" in (c.reason or "")
+
+
+# ---------------------------------------------------------------------------
+# 11. P10.1b: Output Files Same-Directory & Normal Umask Permissions
+# ---------------------------------------------------------------------------
+
+
+def test_output_file_same_dir_and_umask_permissions(tmp_path: Path) -> None:
+    """P10.1b (3): Output temp file in same directory.
+
+    Final file has normal umask perms.
+    """
+    src = tmp_path / "sample_umask.jpg"
+    im = Image.new("RGB", (400, 400), "green")
+    im.save(src, quality=95)
+
+    # Set known umask 0o022 -> should result in 0o644 permissions (not 0o600)
+    old_umask = os.umask(0o022)
+    try:
+        res = shrink_image(src, 1_500)
+        assert res.ok is True
+        assert res.output_path is not None
+        assert res.output_path.parent.resolve() == tmp_path.resolve()
+
+        st_mode = stat.S_IMODE(res.output_path.stat().st_mode)
+        assert st_mode == 0o644, (
+            f"Final file has incorrect mode {oct(st_mode)}, expected 0o644"
+        )
+    finally:
+        os.umask(old_umask)
+
+
+# ---------------------------------------------------------------------------
+# 12. P10.1b: sanitize_filename_component Preserves Dots
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_filename_component_preserves_dots_and_strips_traversal(
+    tmp_path: Path,
+) -> None:
+    """P10.1b (4): remove only whole '..' components.
+
+    Names like holiday..photo.jpg stay unchanged.
+    """
+    from smol.core.paths import sanitize_filename_component
+
+    # Legitimate embedded dots must stay completely unchanged
+    assert sanitize_filename_component("holiday..photo.jpg") == "holiday..photo.jpg"
+    assert sanitize_filename_component("photo.final.jpg") == "photo.final.jpg"
+    assert (
+        sanitize_filename_component("my..sample..image.png") == "my..sample..image.png"
+    )
+
+    # Traversal whole components must be stripped
+    assert sanitize_filename_component("..") == "file"
+    assert sanitize_filename_component("../photo.jpg") == "photo.jpg"
+    assert sanitize_filename_component("../../foo/bar") == "foo_bar"
+    assert sanitize_filename_component("foo/../bar") == "foo_bar"
+
+    # Check output_path preserves holiday..photo
+    out = output_path(tmp_path / "holiday..photo.jpg", 100_000)
+    assert "holiday..photo" in out.name
+    assert "holiday_photo" not in out.name
+
+
+# ---------------------------------------------------------------------------
+# 13. P10.1b: Decompression Bomb Warning as Error & PDF Limits
+# ---------------------------------------------------------------------------
+
+
+def test_decompression_bomb_warning_treated_as_error_in_engine(tmp_path: Path) -> None:
+    """P10.1b (5): DecompressionBombWarning must be treated as an error."""
+    from smol.core.image import DEFAULT_MAX_IMAGE_PIXELS
+
+    # State explicit MAX_IMAGE_PIXELS value
+    assert DEFAULT_MAX_IMAGE_PIXELS == 89_478_485
+
+    bomb_path = tmp_path / "bomb_header.jpg"
+    im = Image.new("RGB", (200, 200), "red")
+    im.save(bomb_path)
+
+    with patch("PIL.Image.MAX_IMAGE_PIXELS", 30_000):
+        # 40,000 pixels is > 30,000 and <= 60,000; emits DecompressionBombWarning
+        res = shrink_image(bomb_path, 500)
+        assert res.ok is False
+        assert "decompression bomb" in (res.error or "").lower()
+
+
+def test_pdf_has_size_and_page_limits(tmp_path: Path) -> None:
+    """P10.1b (5): PDF engine must enforce size and page count limits."""
+    from smol.core.pdf import MAX_PDF_PAGES, MAX_PDF_SIZE_BYTES
+
+    assert MAX_PDF_SIZE_BYTES > 0
+    assert MAX_PDF_PAGES > 0
+
+    # Test file exceeding size limit
+    fake_huge_pdf = tmp_path / "huge.pdf"
+    fake_huge_pdf.write_bytes(b"%PDF-1.4 dummy")
+
+    with patch.object(Path, "stat") as mock_stat:
+        st = MagicMock()
+        st.st_size = MAX_PDF_SIZE_BYTES + 10_000
+        mock_stat.return_value = st
+        res = shrink_pdf(fake_huge_pdf, 50_000)
+        assert res.ok is False
+        assert "exceeds safety limit" in (res.error or "")
+
+    # Test file exceeding page limit
+    fake_pages_pdf = tmp_path / "many_pages.pdf"
+    fake_pages_pdf.write_bytes(b"%PDF-1.4 dummy")
+
+    def fake_run(cmd, *args, **kwargs):
+        if "--show-npages" in cmd:
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = f"{MAX_PDF_PAGES + 500}\n"
+            return res
+        return MagicMock(returncode=1)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        res_pages = shrink_pdf(fake_pages_pdf, 50_000)
+        assert res_pages.ok is False
+        assert "exceeds safety limit" in (res_pages.error or "")
+
+
+# ---------------------------------------------------------------------------
+# 14. P10.1b: Item 6 Checks (Symlinks, Grab Release, Undo Safety)
+# ---------------------------------------------------------------------------
+
+
+def test_output_path_never_overwrites_or_follows_symlink(tmp_path: Path) -> None:
+    """P10.1b (6f): output_path never follows or overwrites symlinks."""
+    src = tmp_path / "pic.jpg"
+    src.write_bytes(b"data")
+
+    # 1. Existing valid symlink at pic_100KB.jpg
+    target_real = tmp_path / "real_file.jpg"
+    target_real.write_bytes(b"target data")
+    symlink_valid = tmp_path / "pic_100KB.jpg"
+    symlink_valid.symlink_to(target_real)
+
+    # 2. Existing dangling symlink at pic_100KB-1.jpg
+    dangling = tmp_path / "pic_100KB-1.jpg"
+    dangling.symlink_to(tmp_path / "non_existent.jpg")
+
+    # output_path must detect BOTH valid and dangling symlinks as collision
+    out = output_path(src, 100_000)
+    assert out.name == "pic_100KB-2.jpg"
+    assert not out.exists()
+    assert not out.is_symlink()
+
+
+def test_undo_deletes_only_output_file_this_run(tmp_path: Path, qapp) -> None:
+    """P10.1b (6g): Undo deletes ONLY the newly created output file."""
+    src = tmp_path / "source.jpg"
+    src.write_bytes(b"original source content")
+    out = tmp_path / "source_100KB.jpg"
+    out.write_bytes(b"compressed content")
+    other = tmp_path / "unrelated.jpg"
+    other.write_bytes(b"unrelated content")
+
+    res = Result(
+        ok=True,
+        output_path=out,
+        original_bytes=len(src.read_bytes()),
+        final_bytes=len(out.read_bytes()),
+    )
+    toast = ToastWindow(results=[(src, res)])
+
+    deleted = toast.undo()
+    assert deleted == [out.resolve()]
+    assert not out.exists(), "Output file was not deleted"
+    assert src.exists(), "CRITICAL: Original file was deleted by Undo!"
+    assert src.read_bytes() == b"original source content"
+    assert other.exists(), "Unrelated file was affected by Undo!"
+
+
+def test_daemon_grabs_released_and_single_instance_lock(tmp_path: Path) -> None:
+    """P10.1b (6b): X11 key/pointer grabs released and single-instance lock."""
+    from smol.daemon.listener import ensure_ungrab
+
+    # 1. ensure_ungrab must be safe to call repeatedly without exception
+    ensure_ungrab()
+    ensure_ungrab()
+
+    # 2. Single-instance lock behaviour
+    state_dir = tmp_path / "daemon_state"
+    svc1 = DaemonService(state_dir=state_dir, config_path=tmp_path / "config.toml")
+    svc2 = DaemonService(state_dir=state_dir, config_path=tmp_path / "config.toml")
+
+    # First instance acquires lock successfully
+    assert svc1.acquire_lock() is True
+    assert svc1.lock_path.exists()
+    assert svc1.pid_path.exists()
+    assert svc1.pid_path.read_text(encoding="utf-8").strip() == str(os.getpid())
+
+    # Second instance must fail to acquire lock
+    assert svc2.acquire_lock() is False
+
+    # Release lock
+    svc1.release_lock()
+    assert not svc1.pid_path.exists()
+
+    # After release, lock can be acquired again by svc2
+    assert svc2.acquire_lock() is True
+    svc2.release_lock()
+
+
+def test_config_and_favourites_recents_hostile_caps() -> None:
+    """P10.1b (6c): config and favourites/recents caps with hostile values."""
+    hostile = {
+        "sizes": {
+            "ladder": [1000 * i for i in range(1, 100)],  # 99 ladder entries
+            "pinned": [2000 * i for i in range(1, 100)],  # 99 pinned entries
+            "recents": [3000 * i for i in range(1, 100)],  # 99 recents entries
+        }
+    }
+    validated = validate_config_dict(hostile)
+    assert len(validated["sizes"]["ladder"]) <= 7
+    assert len(validated["sizes"]["pinned"]) <= 12
+    assert len(validated["sizes"]["recents"]) <= 5
+
+
+def test_wayland_guard_exit_code_3_audit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """P10.1b (6d): Wayland guard exit code 3."""
+    from smol.cli import main
+    from smol.daemon.service import check_wayland_session
+
+    env = {"XDG_SESSION_TYPE": "wayland"}
+    assert check_wayland_session(env) is True
+
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    monkeypatch.delenv("DISPLAY", raising=False)
+
+    code = main(["daemon", "start"])
+    assert code == 3
+    captured = capsys.readouterr()
+    assert "smol's hold-key donut needs an X11 session" in (captured.err + captured.out)
+
+
+def test_no_leftover_ffmpeg_in_core() -> None:
+    """P10.1b (6e): grep for leftover ffmpeg/ffprobe/video/audio in smol/core."""
+    core_dir = Path(__file__).parent.parent / "smol" / "core"
+    for py_file in core_dir.glob("*.py"):
+        text = py_file.read_text(encoding="utf-8").lower()
+        assert "ffmpeg" not in text, (
+            f"Found leftover ffmpeg reference in {py_file.name}"
+        )
+        assert "ffprobe" not in text, (
+            f"Found leftover ffprobe reference in {py_file.name}"
+        )

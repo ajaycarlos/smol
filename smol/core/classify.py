@@ -243,8 +243,33 @@ def classify(path_or_uri: str | Path) -> Classification:
     try:
         flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
         fd = os.open(local_path, flags)
-        with open(fd, "rb", closefd=True) as f:
-            header = f.read(32)
+        try:
+            st_f = os.fstat(fd)
+            if not stat.S_ISREG(st_f.st_mode):
+                if stat.S_ISFIFO(st_f.st_mode):
+                    reason = "FIFO, not supported"
+                elif stat.S_ISSOCK(st_f.st_mode):
+                    reason = "socket, not supported"
+                elif stat.S_ISCHR(st_f.st_mode) or stat.S_ISBLK(st_f.st_mode):
+                    reason = "device file, not supported"
+                elif stat.S_ISDIR(st_f.st_mode):
+                    reason = "folder, not supported"
+                else:
+                    reason = "not a regular file"
+                return Classification(
+                    kind="folder" if stat.S_ISDIR(st_f.st_mode) else "unsupported",
+                    reason=reason,
+                    mismatch_note=None,
+                    path=local_path,
+                )
+            with open(fd, "rb", closefd=True) as f:
+                header = f.read(32)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
     except PermissionError:
         return Classification(
             kind="unreadable",

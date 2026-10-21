@@ -72,11 +72,15 @@ def send_notification(
 ) -> bool:
     """Send desktop notification via notify-send, falling back to terminal.
 
-    Guarantees safe invocation using '--' separator and XML/HTML escaping.
+    Guarantees safe invocation using '--' separator, ANSI neutralization,
+    and XML/HTML escaping.
     Returns True if notify-send succeeded, False if fallen back to terminal.
     """
-    safe_summary = html.escape(summary)
-    safe_body = html.escape(body)
+    clean_summary = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", summary)
+    clean_body = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", body)
+    clean_summary = re.sub(r"[\x00-\x1f]", " ", clean_summary)
+    safe_summary = html.escape(clean_summary)
+    safe_body = html.escape(clean_body)
     if shutil.which("notify-send"):
         cmd = [
             "notify-send",
@@ -85,7 +89,7 @@ def send_notification(
             "-a",
             app_name,
         ]
-        if safe_summary.startswith("-"):
+        if safe_summary.startswith("-") or safe_body.startswith("-"):
             cmd.append("--")
         cmd.extend([safe_summary, safe_body])
 

@@ -5,6 +5,7 @@ import io
 import math
 import os
 import tempfile
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,9 @@ from smol.core.size import format_size
 
 # Register HEIF opener with Pillow for HEIC/AVIF handling
 pillow_heif.register_heif_opener()
+
+# Explicit default maximum pixel threshold (~89.5 MP) for decompression bomb protection
+DEFAULT_MAX_IMAGE_PIXELS: int = 89_478_485
 
 
 def _encode_jpeg(
@@ -311,9 +315,23 @@ def shrink_image(
     # First verify the file is a supported/decodable image format
     suffix = src_path.suffix.lower()
     try:
-        with Image.open(src_path) as test_im:
-            _ = test_im.format
-            w, h = test_im.size
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(src_path) as test_im:
+                _ = test_im.format
+                w, h = test_im.size
+                if w * h > max_pixels:
+                    raise Image.DecompressionBombError(
+                        f"Image dimensions ({w}x{h} = {w*h:,} pixels) exceed safety "
+                        f"limit of {max_pixels:,} pixels "
+                        "(decompression bomb protection)."
+                    )
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        return Result(
+            ok=False,
+            original_bytes=original_bytes,
+            error=f"Decompression bomb protection triggered: {exc}",
+        )
     except (UnidentifiedImageError, OSError, ValueError):
         ext_str = f"'{suffix}'" if suffix else f"'{src_path.name}'"
         return Result(
@@ -346,53 +364,55 @@ def shrink_image(
 
     try:
         Image.MAX_IMAGE_PIXELS = max_pixels
-        with Image.open(src_path) as raw_img:
-            raw_format = (raw_img.format or "").upper()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(src_path) as raw_img:
+                raw_format = (raw_img.format or "").upper()
 
-            # Guard against decompression bomb by pixel count
-            total_pixels = raw_img.width * raw_img.height
-            if total_pixels > max_pixels:
-                return Result(
-                    ok=False,
-                    original_bytes=original_bytes,
-                    error=(
-                        f"Image dimensions ({raw_img.width}x{raw_img.height} = "
-                        f"{total_pixels:,} pixels) exceed safety limit of "
-                        f"{max_pixels:,} pixels (decompression bomb protection)."
-                    ),
-                )
-
-            # Metadata handling: preserve if strip_metadata is False
-            if not strip_metadata:
-                raw_exif = raw_img.getexif()
-                if raw_exif:
-                    if ExifTags.Base.Orientation in raw_exif:
-                        raw_exif[ExifTags.Base.Orientation] = 1
-                    try:
-                        output_exif = raw_exif.tobytes()
-                    except (OSError, ValueError, TypeError):
-                        output_exif = None
-
-            # Apply EXIF rotation (bakes rotation into pixels)
-            img = ImageOps.exif_transpose(raw_img)
-            if img is None:
-                img = raw_img.copy()
-
-            # Convert ICC profile to sRGB
-            icc_profile = raw_img.info.get("icc_profile")
-            if icc_profile:
-                try:
-                    in_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
-                    srgb_profile = ImageCms.createProfile("sRGB")
-                    target_mode = "RGBA" if img.mode in ("RGBA", "LA") else "RGB"
-                    img = ImageCms.profileToProfile(
-                        img, in_profile, srgb_profile, outputMode=target_mode
+                # Guard against decompression bomb by pixel count
+                total_pixels = raw_img.width * raw_img.height
+                if total_pixels > max_pixels:
+                    return Result(
+                        ok=False,
+                        original_bytes=original_bytes,
+                        error=(
+                            f"Image dimensions ({raw_img.width}x{raw_img.height} = "
+                            f"{total_pixels:,} pixels) exceed safety limit of "
+                            f"{max_pixels:,} pixels (decompression bomb protection)."
+                        ),
                     )
-                except (ImageCms.PyCMSError, OSError, ValueError):
-                    pass
 
-            img.info = {}
-    except Image.DecompressionBombError as exc:
+                # Metadata handling: preserve if strip_metadata is False
+                if not strip_metadata:
+                    raw_exif = raw_img.getexif()
+                    if raw_exif:
+                        if ExifTags.Base.Orientation in raw_exif:
+                            raw_exif[ExifTags.Base.Orientation] = 1
+                        try:
+                            output_exif = raw_exif.tobytes()
+                        except (OSError, ValueError, TypeError):
+                            output_exif = None
+
+                # Apply EXIF rotation (bakes rotation into pixels)
+                img = ImageOps.exif_transpose(raw_img)
+                if img is None:
+                    img = raw_img.copy()
+
+                # Convert ICC profile to sRGB
+                icc_profile = raw_img.info.get("icc_profile")
+                if icc_profile:
+                    try:
+                        in_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+                        srgb_profile = ImageCms.createProfile("sRGB")
+                        target_mode = "RGBA" if img.mode in ("RGBA", "LA") else "RGB"
+                        img = ImageCms.profileToProfile(
+                            img, in_profile, srgb_profile, outputMode=target_mode
+                        )
+                    except (ImageCms.PyCMSError, OSError, ValueError):
+                        pass
+
+                img.info = {}
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
         return Result(
             ok=False,
             original_bytes=original_bytes,
@@ -743,6 +763,13 @@ def shrink_image(
             delete=False,
         ) as temp_file:
             temp_path = Path(temp_file.name)
+            # Ensure final output file has normal permissions respecting current umask
+            current_umask = os.umask(0)
+            os.umask(current_umask)
+            try:
+                os.fchmod(temp_file.fileno(), 0o666 & ~current_umask)
+            except (AttributeError, OSError):
+                pass
             temp_file.write(best_data)
             temp_file.flush()
             os.fsync(temp_file.fileno())
@@ -764,7 +791,7 @@ def shrink_image(
         )
     except OSError as exc:
         if temp_path is not None and temp_path.exists():
-            temp_path.unlink()
+            temp_path.unlink(missing_ok=True)
         if getattr(exc, "errno", None) == errno.ENOSPC:
             err_msg = (
                 "Disk is full (no space left on device); cannot write output file."
@@ -776,6 +803,13 @@ def shrink_image(
             original_bytes=original_bytes,
             error=err_msg,
         )
+    except BaseException:
+        if temp_path is not None and temp_path.exists():
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
     final_bytes = dest_path.stat().st_size
     if final_bytes > target_bytes:

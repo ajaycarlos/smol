@@ -446,8 +446,15 @@ P10.1 Security audit and hardening (complete); ready for packaging and v1.0 rele
   - Protected against decompression bombs: caught `Image.DecompressionBombError` in `smol/ui/donut_window.py` and `smol/core/suggest.py`, avoiding Qt pixmap abort crashes and falling back to safe heuristics.
   - Hardened desktop integrations: properly quoted binary paths with spaces and added backup copy protection for corrupted Thunar XML files.
   - Authored `SECURITY.md` (1-page threat model: what smol protects against, what it does not protect against, reporting policy).
-  - Created 15 dedicated security tests in `tests/test_security_audit.py`.
-  - VERIFY: hostile filenames (`-rf weird 'name".jpg` and newline filenames) tested and verified; 431 tests passing; ruff check clean.
+  - P10.1b Close gaps in security pass:
+    - Hostile filenames with real shrinking (1.2 MB -> 100 KB) on `-rf weird 'name".jpg`, newline in name, ANSI escape `\x1b[31m`. Verified sane output names, notifier receives `--` and sanitized text, toast is plain text, daemon log stays on 1 line, and CLI console output strips ANSI escapes/newlines while `--json` keeps raw path.
+    - TOCTOU resistance: added `os.fstat(fd)` post-open in `smol/core/classify.py` verifying `stat.S_ISREG(st_f.st_mode)`.
+    - Atomic temporary files created in target directory/filesystem with normal umask (`0o666 & ~umask`) applied before `os.replace`, with cleanup on exception or cancellation.
+    - Sanitization of naming patterns: updated `sanitize_filename_component` to remove only whole `..` path components and separators, preserving intra-name dots (`holiday..photo.jpg`, `photo.final.jpg`).
+    - Resource exhaustion caps: explicit `Image.MAX_IMAGE_PIXELS = 89_478_485` with `DecompressionBombWarning` treated as error; enforced PDF limits `MAX_PDF_SIZE_BYTES = 500_000_000` (500 MB) and `MAX_PDF_PAGES = 2_000`.
+    - Collision & symlink safety: `output_path` checks `(candidate.exists() or candidate.is_symlink())` to prevent symlink and dangling symlink overwrites.
+    - Audit checklist verified: zero `shell=True` / `os.system`; daemon single-instance locking; config/favourites caps; Wayland guard exit code 3; zero leftover media/ffmpeg in core; undo deletes only output files.
+    - Updated `SECURITY.md` and added test coverage across all gap areas (443 total tests passing, 0 ruff errors).
 
 ## Next
 - Packaging (AppImage + .deb), docs, CI, QA, v1.0 release.

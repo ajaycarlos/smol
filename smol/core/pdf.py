@@ -40,6 +40,10 @@ PDF_RUNGS: list[dict[str, Any]] = [
     {"dpi": 60, "quality": 50, "qfactor": 1.00},
 ]
 
+# Explicit safety limits to guard against resource exhaustion / DoS
+MAX_PDF_SIZE_BYTES: int = 500_000_000  # 500 MB
+MAX_PDF_PAGES: int = 2_000  # 2,000 pages
+
 
 def shrink_pdf(
     src: str | Path,
@@ -65,6 +69,16 @@ def shrink_pdf(
     orig_bytes = src_path.stat().st_size
     if orig_bytes == 0:
         return Result(ok=False, original_bytes=0, error="File is empty (0 bytes).")
+
+    if orig_bytes > MAX_PDF_SIZE_BYTES:
+        return Result(
+            ok=False,
+            original_bytes=orig_bytes,
+            error=(
+                f"PDF file size ({format_size(orig_bytes)}) exceeds safety limit "
+                f"({format_size(MAX_PDF_SIZE_BYTES)})."
+            ),
+        )
 
     # Verify basic PDF header
     try:
@@ -105,6 +119,29 @@ def shrink_pdf(
                 "Install it with: sudo apt install qpdf"
             ),
         )
+
+    # Enforce maximum page count limit
+    try:
+        res_pages = subprocess.run(
+            [qpdf_bin, "--show-npages", "--", str(src_path.resolve())],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+        if res_pages.returncode == 0 and res_pages.stdout.strip().isdigit():
+            page_count = int(res_pages.stdout.strip())
+            if page_count > MAX_PDF_PAGES:
+                return Result(
+                    ok=False,
+                    original_bytes=orig_bytes,
+                    error=(
+                        f"PDF page count ({page_count:,}) exceeds safety limit of "
+                        f"{MAX_PDF_PAGES:,} pages."
+                    ),
+                )
+    except (subprocess.SubprocessError, OSError):
+        pass
 
     opts = options or {}
     cfg = load_config(opts.get("config_path"))
@@ -325,6 +362,13 @@ def shrink_pdf(
                 delete=False,
             ) as tf:
                 temp_dest = Path(tf.name)
+                # Ensure final file has normal permissions respecting current umask
+                current_umask = os.umask(0)
+                os.umask(current_umask)
+                try:
+                    os.fchmod(tf.fileno(), 0o666 & ~current_umask)
+                except (AttributeError, OSError):
+                    pass
                 shutil.copyfile(best_candidate_path, temp_dest)
 
             os.replace(temp_dest, dest_path)
@@ -332,7 +376,7 @@ def shrink_pdf(
         except OSError as exc:
             if temp_dest is not None and temp_dest.exists():
                 try:
-                    temp_dest.unlink()
+                    temp_dest.unlink(missing_ok=True)
                 except OSError:
                     pass
             if getattr(exc, "errno", None) == errno.ENOSPC:
@@ -346,6 +390,13 @@ def shrink_pdf(
                 original_bytes=orig_bytes,
                 error=err_msg,
             )
+        except BaseException:
+            if temp_dest is not None and temp_dest.exists():
+                try:
+                    temp_dest.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
         # Post-write disk verification: size must be <= target_bytes
         actual_size = dest_path.stat().st_size
