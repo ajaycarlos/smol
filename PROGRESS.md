@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-Packaging (AppImage complete; .deb packaging next); ready for v1.0 release.
+Packaging complete (AppImage and .deb); ready for documentation, CI, QA, and v1.0 release.
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -477,11 +477,21 @@ Packaging (AppImage complete; .deb packaging next); ready for v1.0 release.
   - Tested in isolated environment without Python or virtualenv on PATH: `./smol-0.9.0-x86_64.AppImage --version` outputs `smol 0.9.0`, image/PDF shrinking operates correctly, and donut overlay initializes cleanly on X11.
   - Verified `--appimage-extract-and-run` fallback for systems without FUSE.
   - Documented `libfuse2` requirement on Ubuntu 22.04+ (`libfuse2t64` / `libfuse2`), `--appimage-extract-and-run` fallback, and external tool prerequisites in `README.md`.
-  - Added automated verification test script `scripts/verify_appimage.sh`.
-  - VERIFY: AppImage runs `--version` (`smol 0.9.0`), opens donut window, size reported honestly at 66 MB, zero bundled `gs`/`qpdf`; all 449 unit tests pass; `ruff check .` clean.
+- Produce standalone Debian package (.deb) using dpkg-deb from PyInstaller onedir payload:
+  - Authored `packaging/build_deb.sh`: stages clean package directory hierarchy under `build/deb/` reusing `dist/smol/` onedir payload.
+  - Hand-crafted `DEBIAN/control` (`Package: smol`, `Version: 0.9.0`, `Section: utils`, `Priority: optional`, `Architecture: amd64`, `Recommends: libnotify-bin`).
+  - Listed complete runtime dependencies identified via `ldd`: `ghostscript`, `qpdf`, `libxcb-cursor0`, `libx11-xcb1`, `libxcb-icccm4`, `libxcb-image0`, `libxcb-keysyms1`, `libxcb-randr0`, `libxcb-render-util0`, `libxcb-render0`, `libxcb-shape0`, `libxcb-shm0`, `libxcb-sync1`, `libxcb-xfixes0`, `libxcb-xkb1`, `libxcb1`, `libxkbcommon-x11-0`, `libxkbcommon0`.
+  - Configured layout: application files in `/opt/smol/`, symlink `/usr/bin/smol -> /opt/smol/smol`, desktop entry `/usr/share/applications/smol.desktop`, and hicolor icons in `/usr/share/icons/hicolor/` (16–512 px PNGs and scalable SVG).
+  - Authored safe `postinst` and `postrm` maintainer scripts (`0755`): safely invokes `update-desktop-database` and `gtk-update-icon-cache` if installed, and strictly preserves all user configs in `$HOME` and `~/.config/smol`.
+  - Built with `dpkg-deb --build --root-owner-group`: generated `dist/smol_0.9.0_amd64.deb` (55 MB / 56,712,856 bytes).
+  - Verified package metadata via `dpkg-deb -I` and archive contents via `dpkg-deb -c`.
+  - Tested installation and lifecycle on host machine: `sudo dpkg -i dist/smol_0.9.0_amd64.deb`, verified `/usr/bin/smol` symlink, desktop entry, and icon existence, verified `smol --version` outputs `smol 0.9.0`, verified `smol doctor` (all checks pass), and verified clean uninstallation via `sudo apt remove -y smol` with `/opt/smol/` removal and user configuration preservation.
+  - Documented release compatibility baseline: host builds against glibc 2.39 (Noble); official CI release builds must run on Ubuntu 22.04 LTS (Jammy, glibc 2.35) or older for maximum distro compatibility.
+  - Added unit test suite in `tests/test_deb_packaging.py` (4 tests).
+  - VERIFY: `dpkg-deb -I` and `-c` verified; local installation, version check, desktop entry/icon inspection, and removal all verified; all 453 unit tests pass; `ruff check .` clean.
 
 ## Next
-- Packaging (.deb package reusing dist/smol/), docs, CI, QA, v1.0 release.
+- Documentation, man pages, user guide, CI, QA, v1.0 release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.
