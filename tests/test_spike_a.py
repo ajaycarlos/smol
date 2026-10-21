@@ -1,3 +1,5 @@
+import pytest
+
 from spikes.a_key_hold import (
     CANDIDATE_KEYS,
     KeyHoldTracker,
@@ -104,6 +106,7 @@ def test_tracker_all_passed_and_format_summary():
         assert f"{k}: PASS" in summary_text
 
 
+@pytest.mark.display
 def test_x11_query_keymap_stop_check():
     import os
 

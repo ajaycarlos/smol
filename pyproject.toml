@@ -26,6 +26,9 @@ include = ["smol*"]
 
 [tool.pytest.ini_options]
 addopts = "--tb=short --no-header"
+markers = [
+    "display: tests requiring a live display server (X11)",
+]
 
 [tool.ruff.lint]
 extend-select = ["E", "F", "I", "B", "UP"]

@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-Documentation complete; ready for CI, QA, and v1.0 release.
+CI test & build pipeline complete; ready for final QA and v1.0 release.
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -507,9 +507,14 @@ Documentation complete; ready for CI, QA, and v1.0 release.
   - Added `docs/ARCHITECTURE.md`: single-page architectural breakdown with text diagrams, subsystem matrix, compression pipelines (image quality search / Lanczos downscale ladder, Ghostscript PDF ladder + qpdf), and safety invariants.
   - Added `docs/decisions/` directory with `README.md` and short decision records (D-001 through D-014) explaining rationale and pointing to the authoritative `DECISIONS.md`.
   - VERIFY: Commands, doctor check, dry-run, JSON output, integrate status, autostart status, help text, and test suite (453 passed, ruff clean) verified.
+- Add GitHub Actions CI and draft release workflows (v1.0 Sequence item 11):
+  - Created `.github/workflows/ci.yml`: runs on every push and pull request, sets up Python 3.12 and `uv`, installs system dependencies (`ghostscript`, `qpdf`, `libxcb-cursor0`, `libxkbcommon-x11-0`, `libgl1`, `libegl1`), runs `uv run ruff check .`, and runs `QT_QPA_PLATFORM=offscreen uv run pytest -m "not display"`.
+  - Decorated display-dependent X11 tests (`test_x11_query_keymap_stop_check` in `tests/test_spike_a.py` and `test_run_x11_drag_listener_stop_check` in `tests/test_spike_b.py`) with `@pytest.mark.display` and registered the `display` marker in `pyproject.toml`.
+  - Created `.github/workflows/release.yml`: triggers on version tags (`v*`), runs on the oldest supported Ubuntu runner (`ubuntu-22.04` for glibc 2.35 compatibility), compiles AppImage (`packaging/build_appimage.sh`) and Debian package (`packaging/build_deb.sh`), generates `SHA256SUMS`, and creates a draft GitHub release via `gh release create --draft` attaching all three artifacts without publishing.
+  - VERIFY: YAML syntax valid; `uv run ruff check .` passes with 0 warnings; `QT_QPA_PLATFORM=offscreen uv run pytest -m "not display"` passes (451 passed, 2 deselected).
 
 ## Next
-- CI test & build pipeline, final manual QA checklist, and v1.0 release.
+- Final manual QA checklist and regression test pass, then v1.0 release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.

@@ -1,3 +1,5 @@
+import pytest
+
 from spikes.b_drag_and_cursor import (
     DragTracker,
     get_cursor_fallback,
@@ -144,6 +146,7 @@ def test_drag_tracker_custom_keys():
     assert tracker.last_trigger_key == "Right Ctrl"
 
 
+@pytest.mark.display
 def test_run_x11_drag_listener_stop_check():
     import os
 

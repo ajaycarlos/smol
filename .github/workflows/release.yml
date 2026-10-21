@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Release Packages
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dpkg-dev \
+            file \
+            ghostscript \
+            qpdf \
+            libxcb-cursor0 \
+            libxkbcommon-x11-0 \
+            libgl1 \
+            libegl1 \
+            libfuse2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Build AppImage
+        run: bash packaging/build_appimage.sh
+
+      - name: Build Debian package (.deb)
+        run: bash packaging/build_deb.sh
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum smol-*.AppImage smol_*_amd64.deb > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create Draft Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/smol-*.AppImage \
+            dist/smol_*_amd64.deb \
+            dist/SHA256SUMS \
+            --draft \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
