@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- smol placeholder icon (v1.0 placeholder - real branding post-v1.0) -->
+  <g fill-rule="evenodd">
+    <!-- Main graphite body (300° to 240° clockwise) -->
+    <path fill="#262B36" d="
+      M 364.00 68.94
+      A 216 216 0 1 1 148.00 68.94
+      L 202.00 162.47
+      A 108 108 0 1 0 310.00 162.47
+      Z
+    "/>
+    <!-- Accent pinched segment (240° to 300° with inward pinch at 270°) -->
+    <path fill="#00D2B4" d="
+      M 148.00 68.94
+      C 185.24 47.44, 234.00 104.00, 256.00 104.00
+      C 278.00 104.00, 326.76 47.44, 364.00 68.94
+      L 310.00 162.47
+      A 108 108 0 0 0 202.00 162.47
+      Z
+    "/>
+  </g>
+</svg>

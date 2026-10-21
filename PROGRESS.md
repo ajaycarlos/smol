@@ -462,6 +462,12 @@ P10.1 Security audit and hardening (complete); ready for packaging and v1.0 rele
   - Added `uninstall.sh`: stops running daemon, removes right-click integrations and autostart entry, uninstalls CLI tool, and preserves configuration in `~/.config/smol` unless `--purge` is passed (purges config, state, and cache).
   - Added test suite in `tests/test_install_scripts.py` (6 tests).
   - VERIFY: Clean virtual environment installation verified; `smol doctor` runs cleanly; `install.sh` and `uninstall.sh` verified with integration removal and config preservation/purge; full test suite passes (449 tests); `uv run ruff check .` clean.
+- Create placeholder app icon set and XDG desktop entry (D-009):
+  - Created `assets/icon/smol.svg`: simple flat two-colour placeholder icon (dark graphite `#262B36` and vibrant cyan `#00D2B4`) featuring a donut ring with a smooth inward pinch at the top segment, clearly legible down to 16 px. (Note: this is an interim placeholder icon; full branding design track is scheduled post-v1.0 per D-009).
+  - Created `assets/icon/smol-tray.svg`: clean monochrome silhouette tray icon in white (`#FFFFFF`) with inward pinch contour for system tray panels.
+  - Generated standard hicolor PNG icon hierarchy across 8 sizes (`16, 24, 32, 48, 64, 128, 256, 512`) into `assets/icon/hicolor/<size>x<size>/apps/smol.png` using `rsvg-convert`.
+  - Created standard XDG application entry `packaging/smol.desktop` (`Name=smol`, `Exec=smol donut`, `Icon=smol`, `Categories=Utility;Graphics;`, `Comment=Shrink any file to at most a chosen size`, `StartupNotify=false`).
+  - VERIFY: PNG files exist at all 8 sizes, SVG files validated with `identify` and `QSvgRenderer`, and `desktop-file-validate packaging/smol.desktop` reports 0 errors.
 
 ## Next
 - Packaging (AppImage + .deb), docs, CI, QA, v1.0 release.

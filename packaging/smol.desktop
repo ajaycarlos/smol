@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=smol
+Comment=Shrink any file to at most a chosen size
+Exec=smol donut
+Icon=smol
+Terminal=false
+Categories=Utility;Graphics;
+StartupNotify=false

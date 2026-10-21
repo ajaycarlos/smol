@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- smol monochrome tray icon (v1.0 placeholder - real branding post-v1.0) -->
+  <path fill="#FFFFFF" fill-rule="evenodd" d="
+    M 364.00 68.94
+    A 216 216 0 1 1 148.00 68.94
+    C 185.24 47.44, 234.00 104.00, 256.00 104.00
+    C 278.00 104.00, 326.76 47.44, 364.00 68.94
+    Z
+    M 256.00 148.00
+    A 108 108 0 1 0 256.00 364.00
+    A 108 108 0 1 0 256.00 148.00
+    Z
+  "/>
+</svg>
