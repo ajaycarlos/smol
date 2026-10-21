@@ -511,7 +511,7 @@ CI test & build pipeline complete; ready for final QA and v1.0 release.
   - Created `.github/workflows/ci.yml`: runs on every push and pull request, sets up Python 3.12 and `uv`, installs system dependencies (`ghostscript`, `qpdf`, `libxcb-cursor0`, `libxkbcommon-x11-0`, `libgl1`, `libegl1`), runs `uv run ruff check .`, and runs `QT_QPA_PLATFORM=offscreen uv run pytest -m "not display"`.
   - Decorated display-dependent X11 tests (`test_x11_query_keymap_stop_check` in `tests/test_spike_a.py` and `test_run_x11_drag_listener_stop_check` in `tests/test_spike_b.py`) with `@pytest.mark.display` and registered the `display` marker in `pyproject.toml`.
   - Created `.github/workflows/release.yml`: triggers on version tags (`v*`), runs on the oldest supported Ubuntu runner (`ubuntu-22.04` for glibc 2.35 compatibility), compiles AppImage (`packaging/build_appimage.sh`) and Debian package (`packaging/build_deb.sh`), generates `SHA256SUMS`, and creates a draft GitHub release via `gh release create --draft` attaching all three artifacts without publishing.
-  - VERIFY: YAML syntax valid; `uv run ruff check .` passes with 0 warnings; `QT_QPA_PLATFORM=offscreen uv run pytest -m "not display"` passes (451 passed, 2 deselected).
+  - VERIFY: YAML syntax valid; `uv run ruff check .` passes with 0 warnings; `QT_QPA_PLATFORM=offscreen uv run pytest -m "not display"` passes (451 passed, 2 deselected); pushed to GitHub and verified CI workflow run 39560933783 went green (Lint & Test completed in 2m 2s).
 
 ## Next
 - Final manual QA checklist and regression test pass, then v1.0 release.
