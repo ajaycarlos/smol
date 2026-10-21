@@ -1,6 +1,7 @@
 """Tests for smol integrate subcommand and file manager integration."""
 
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -219,6 +220,12 @@ def test_shrink_notify_integration(tmp_path: Path, monkeypatch):
 
     mock_run = MagicMock()
     monkeypatch.setattr("subprocess.run", mock_run)
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda cmd: "/usr/bin/notify-send"
+        if cmd == "notify-send"
+        else shutil.which(cmd),
+    )
 
     ret = main(["shrink", str(img_path), "--max", "20KB", "--notify"])
     assert ret == 0
@@ -248,6 +255,12 @@ def test_shrink_notify_batch_and_failure(tmp_path: Path, monkeypatch):
 
     mock_run = MagicMock()
     monkeypatch.setattr("subprocess.run", mock_run)
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda cmd: "/usr/bin/notify-send"
+        if cmd == "notify-send"
+        else shutil.which(cmd),
+    )
 
     # Batch success
     ret = main(["shrink", str(img1), str(img2), "--max", "50KB", "--notify"])

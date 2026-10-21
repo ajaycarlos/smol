@@ -22,7 +22,8 @@ jobs:
             libxcb-cursor0 \
             libxkbcommon-x11-0 \
             libgl1 \
-            libegl1
+            libegl1 \
+            libnotify-bin
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
