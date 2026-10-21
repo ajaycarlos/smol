@@ -19,9 +19,39 @@
 
 ## Try it
 
-### 1. Installation
+### 1. AppImage (Standalone Executable)
 
-Prerequisites: Python 3.12+ and [uv](https://docs.astral.sh/uv/) (or standard venv/pip). External tools like `notify-send` are used for desktop notifications.
+A self-contained AppImage is provided for Linux (x86_64), containing all Python dependencies and PySide6:
+
+```bash
+# Make executable and run
+chmod +x smol-0.9.0-x86_64.AppImage
+./smol-0.9.0-x86_64.AppImage --version
+./smol-0.9.0-x86_64.AppImage donut --demo
+./smol-0.9.0-x86_64.AppImage shrink photo.jpg --max 100KB
+```
+
+#### FUSE Requirement (Ubuntu 22.04+)
+AppImages require FUSE 2 to mount. On Ubuntu 22.04, 24.04+, and newer Debian/Mint systems, install `libfuse2`:
+```bash
+sudo apt install libfuse2t64   # Ubuntu 24.04+ / Debian 13
+# or: sudo apt install libfuse2  # Ubuntu 22.04 / Debian 12
+```
+
+#### Fallback Without FUSE (`--appimage-extract-and-run`)
+If FUSE is unavailable (e.g., inside containers, CI environments, or live USBs), use the built-in fallback:
+```bash
+./smol-0.9.0-x86_64.AppImage --appimage-extract-and-run <command>
+```
+
+#### External Tools (Ghostscript & qpdf)
+Ghostscript (`gs`) and `qpdf` are **not bundled** inside the AppImage. To shrink PDF files, install them via your package manager:
+```bash
+sudo apt install ghostscript qpdf
+```
+Run `./smol-0.9.0-x86_64.AppImage doctor` to verify system tool availability.
+
+### 2. Manual Installation via uv / Python
 
 ```bash
 # Clone and enter directory
@@ -36,7 +66,7 @@ uv pip install -e .
 smol doctor
 ```
 
-### 2. Right-Click File Manager Integration
+### 3. Right-Click File Manager Integration
 
 Install right-click actions for your file manager (supports **Nemo**, **Nautilus**, **Dolphin**, and **Thunar**):
 
@@ -55,7 +85,7 @@ To remove right-click actions cleanly at any time:
 smol integrate uninstall
 ```
 
-### 3. CLI Examples (`smol shrink`)
+### 4. CLI Examples (`smol shrink`)
 
 You can also shrink images directly from your terminal:
 

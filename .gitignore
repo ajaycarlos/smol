@@ -12,6 +12,9 @@ env/
 build/
 dist/
 *.egg-info*/
+packaging/tools/
+packaging/AppDir/
+*.AppImage
 spikes/*_log.txt
 
 # Test samples (generated, not committed)

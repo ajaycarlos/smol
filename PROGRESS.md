@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-P10.1 Security audit and hardening (complete); ready for packaging and v1.0 release.
+Packaging (AppImage complete; .deb packaging next); ready for v1.0 release.
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -468,9 +468,20 @@ P10.1 Security audit and hardening (complete); ready for packaging and v1.0 rele
   - Generated standard hicolor PNG icon hierarchy across 8 sizes (`16, 24, 32, 48, 64, 128, 256, 512`) into `assets/icon/hicolor/<size>x<size>/apps/smol.png` using `rsvg-convert`.
   - Created standard XDG application entry `packaging/smol.desktop` (`Name=smol`, `Exec=smol donut`, `Icon=smol`, `Categories=Utility;Graphics;`, `Comment=Shrink any file to at most a chosen size`, `StartupNotify=false`).
   - VERIFY: PNG files exist at all 8 sizes, SVG files validated with `identify` and `QSvgRenderer`, and `desktop-file-validate packaging/smol.desktop` reports 0 errors.
+- Produce standalone single-file AppImage using PyInstaller (onedir) and appimagetool:
+  - Added `pyinstaller>=6.10.0` dev dependency and authored `packaging/smol.spec` configured for onedir compilation targeting `smol.cli:main` entrypoint.
+  - Built and preserved stable PyInstaller onedir payload at `dist/smol/` (`dist/smol/smol`, 198 MB uncompressed) for subsequent reuse by `.deb` packaging.
+  - Assembled `AppDir` with `packaging/smol.desktop`, hicolor PNG icons (16–512 px) and SVG from `assets/icon/`, and hardened `AppRun` script supporting GUI launch (defaults to donut when stdout is not a tty) and CLI pass-through with standard system path fallbacks.
+  - Packaged standalone AppImage via `appimagetool`: output `dist/smol-0.9.0-x86_64.AppImage`, final size 66 MB (68,700,664 bytes).
+  - Confirmed external Ghostscript (`gs`) and `qpdf` are strictly unbundled: `smol doctor` runs cleanly via AppImage and guides user on missing system tools.
+  - Tested in isolated environment without Python or virtualenv on PATH: `./smol-0.9.0-x86_64.AppImage --version` outputs `smol 0.9.0`, image/PDF shrinking operates correctly, and donut overlay initializes cleanly on X11.
+  - Verified `--appimage-extract-and-run` fallback for systems without FUSE.
+  - Documented `libfuse2` requirement on Ubuntu 22.04+ (`libfuse2t64` / `libfuse2`), `--appimage-extract-and-run` fallback, and external tool prerequisites in `README.md`.
+  - Added automated verification test script `scripts/verify_appimage.sh`.
+  - VERIFY: AppImage runs `--version` (`smol 0.9.0`), opens donut window, size reported honestly at 66 MB, zero bundled `gs`/`qpdf`; all 449 unit tests pass; `ruff check .` clean.
 
 ## Next
-- Packaging (AppImage + .deb), docs, CI, QA, v1.0 release.
+- Packaging (.deb package reusing dist/smol/), docs, CI, QA, v1.0 release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.

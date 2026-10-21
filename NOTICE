@@ -24,3 +24,9 @@ This project incorporates dependencies and references to third-party open-source
 - Version: >= 4.0.0
 - License: MIT License
 - Purpose: Standardized cross-platform resolution of user configuration, state, and cache directories without hard-coding platform paths.
+
+## PyInstaller
+- Project: PyInstaller (https://www.pyinstaller.org)
+- Version: >= 6.10.0
+- License: GNU General Public License v2.0 or later with PyInstaller Exception
+- Purpose: Standalone binary compilation and onedir packaging for Linux desktop distribution.
