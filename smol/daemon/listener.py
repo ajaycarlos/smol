@@ -400,12 +400,14 @@ class X11EventListener(QThread):
         target_key: str = "Super",
         poll_interval: float = 0.015,
         idle_poll_interval: float = 0.08,
+        max_idle_poll_interval: float = 0.10,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
         self.target_key = target_key
         self.poll_interval = poll_interval
         self.idle_poll_interval = idle_poll_interval
+        self.max_idle_poll_interval = max_idle_poll_interval
         self._stop_requested = False
         self.key_tracker = KeyHoldTracker(target_key=target_key)
         self.drag_tracker = DragTracker()
@@ -470,6 +472,7 @@ class X11EventListener(QThread):
 
             last_key_state: dict[int, bool] = {kc: False for kc in keycode_map}
             last_km: list[int] | None = None
+            last_activity_time = time.perf_counter()
 
             while not self._stop_requested:
                 now = time.perf_counter()
@@ -477,6 +480,7 @@ class X11EventListener(QThread):
                 # Query key states
                 km = d.query_keymap()
                 if km != last_km:
+                    last_activity_time = now
                     for kc, raw_name in keycode_map.items():
                         is_down = bool((km[kc // 8] >> (kc % 8)) & 1)
                         was_down = last_key_state.get(kc, False)
@@ -507,6 +511,7 @@ class X11EventListener(QThread):
 
                 trigger_held = self.key_tracker.is_target_pressed()
                 if trigger_held:
+                    last_activity_time = now
                     pointer = root.query_pointer()
                     root_x = pointer.root_x
                     root_y = pointer.root_y
@@ -522,7 +527,16 @@ class X11EventListener(QThread):
                         self.drag_cancelled.emit()
                     time.sleep(self.poll_interval)
                 else:
-                    time.sleep(self.idle_poll_interval)
+                    # Adaptive interval: 80 ms if recent key change (<0.5s),
+                    # 100 ms when quiescent. Detection delay is <=100 ms,
+                    # keeping total summon time well under 150 ms target.
+                    dt_idle = now - last_activity_time
+                    current_idle = (
+                        self.idle_poll_interval
+                        if dt_idle < 0.5
+                        else self.max_idle_poll_interval
+                    )
+                    time.sleep(current_idle)
         except Exception as e:  # noqa: BLE001
             self.error_occurred.emit(f"X11 listener exception: {e}")
         finally:

@@ -487,7 +487,7 @@ class DaemonService:
             # Heartbeat timer ensuring Python signal handlers execute during Qt loop
             heartbeat = QTimer()
             heartbeat.timeout.connect(lambda: None)
-            heartbeat.start(500)
+            heartbeat.start(1000)
 
             # Config watcher timer checking for file modifications on disk
             config_watcher = QTimer()

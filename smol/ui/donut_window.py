@@ -171,6 +171,7 @@ class SegmentItem(QObject):
         label: str,
         target_bytes: int | None,
         enabled: bool = True,
+        clickable: bool = True,
         reason: str | None = None,
         reduce_motion: bool = False,
         parent: QObject | None = None,
@@ -180,6 +181,7 @@ class SegmentItem(QObject):
         self.label = label
         self.target_bytes = target_bytes
         self.enabled = enabled
+        self.clickable = clickable
         self.reason = reason
         self.reduce_motion = reduce_motion
         self._hover_progress: float = 0.0
@@ -629,10 +631,17 @@ class DonutWindow(QWidget):
         for idx, s in enumerate(limited):
             if not self.file_paths or self.max_file_bytes == 0:
                 enabled = True
+                clickable = True
                 reason = None
             else:
                 enabled = s.eligible
                 reason = s.reason
+                if reason == "larger than the file":
+                    clickable = False
+                elif (reason and "too small for this file" in reason) or s.eligible:
+                    clickable = True
+                else:
+                    clickable = False
 
             self.segments.append(
                 SegmentItem(
@@ -640,6 +649,7 @@ class DonutWindow(QWidget):
                     label=s.label,
                     target_bytes=s.bytes,
                     enabled=enabled,
+                    clickable=clickable,
                     reason=reason,
                     reduce_motion=self.reduce_motion,
                     parent=self,
@@ -653,6 +663,7 @@ class DonutWindow(QWidget):
                 label="Custom…",
                 target_bytes=None,
                 enabled=True,
+                clickable=True,
                 reason=None,
                 reduce_motion=self.reduce_motion,
                 parent=self,
@@ -699,15 +710,26 @@ class DonutWindow(QWidget):
                     continue
                 if self.max_file_bytes > 0 and seg.target_bytes > self.max_file_bytes:
                     seg.enabled = False
+                    seg.clickable = False
                     seg.reason = "larger than the file"
                 elif floor_b > 0 and seg.target_bytes < floor_b:
                     seg.enabled = False
+                    seg.clickable = True
                     formatted = format_size(floor_b, spaced=True)
                     seg.reason = f"too small for this file (min about {formatted})"
                 else:
                     seg.enabled = True
+                    seg.clickable = True
                     seg.reason = None
         self.update()
+
+    @property
+    def is_already_small(self) -> bool:
+        """True if all predefined target sizes are larger than the input file."""
+        size_segs = [s for s in self.segments if s.target_bytes is not None]
+        return bool(
+            size_segs and all(s.reason == "larger than the file" for s in size_segs)
+        )
 
     def _configure_window(self) -> None:
         """Configure Qt window flags, attributes, opacity, tracking, and drops."""
@@ -903,7 +925,8 @@ class DonutWindow(QWidget):
 
         self._hovered_idx = new_idx
         for idx, seg in enumerate(self.segments):
-            target_val = 1.0 if (idx == new_idx and seg.enabled) else 0.0
+            is_active = seg.enabled or getattr(seg, "clickable", False)
+            target_val = 1.0 if (idx == new_idx and is_active) else 0.0
             anim_active = seg._hover_anim is not None and seg._hover_anim.state()
             if seg.hover_progress != target_val or anim_active:
                 if self.reduce_motion:
@@ -1168,16 +1191,20 @@ class DonutWindow(QWidget):
                     self.prediction_service.cancel()
                     if item.reason:
                         self._hover_reason = item.reason
+                        self.setToolTip(item.reason)
                         self._animate_prediction_opacity(1.0)
                     else:
                         self._hover_reason = None
+                        self.setToolTip("")
                         self._animate_prediction_opacity(0.0)
                 elif item.target_bytes is None or self.state != "idle":
                     self._hover_reason = None
+                    self.setToolTip("")
                     self.prediction_service.cancel()
                     self._animate_prediction_opacity(0.0)
                 else:
                     self._hover_reason = None
+                    self.setToolTip("")
                     first_file = self._first_image_path()
                     if first_file is not None:
                         self.prediction_service.request(first_file, item.target_bytes)
@@ -1185,6 +1212,7 @@ class DonutWindow(QWidget):
 
     def leaveEvent(self, event: object) -> None:
         """Clear hover state and cancel pending predictions when mouse leaves window."""
+        self.setToolTip("")
         if self._hovered_idx is not None:
             self._set_hovered_segment(None)
             self._hover_reason = None
@@ -1427,7 +1455,7 @@ class DonutWindow(QWidget):
 
         if idx is not None:
             item = self.segments[idx]
-            if not item.enabled or self.all_segments_dimmed:
+            if not getattr(item, "clickable", item.enabled) or self.all_segments_dimmed:
                 event.ignore()
                 return
 
@@ -1784,7 +1812,7 @@ class DonutWindow(QWidget):
             idx = self._segment_at(dx, dy)
             if idx is not None:
                 item = self.segments[idx]
-                if item.enabled:
+                if getattr(item, "clickable", item.enabled):
                     self._chosen_segment_idx = idx
                     if item.target_bytes is not None:
                         self.start_shrink(item.target_bytes)
@@ -1805,7 +1833,7 @@ class DonutWindow(QWidget):
             idx = self._segment_at(dx, dy)
             if idx is not None:
                 item = self.segments[idx]
-                if item.enabled:
+                if getattr(item, "clickable", item.enabled):
                     self._chosen_segment_idx = idx
                     if item.target_bytes is not None:
                         self.start_shrink(item.target_bytes)
@@ -1828,7 +1856,7 @@ class DonutWindow(QWidget):
             return
 
         item = self.segments[idx]
-        if not item.enabled:
+        if not getattr(item, "clickable", item.enabled):
             return
 
         self.selected_size = item.label
@@ -2678,16 +2706,30 @@ class DonutWindow(QWidget):
                 is_ok = pred.ok
 
             op = self._prediction_opacity
+            center_size_str = (
+                "Already small"
+                if (self.is_already_small and not self._hover_reason)
+                else self.file_size_text
+            )
+            is_already_small_active = (
+                self.is_already_small and not self._hover_reason and op <= 0.0
+            )
+            normal_size_color = (
+                QColor(251, 191, 36, 240)
+                if is_already_small_active
+                else QColor(210, 215, 225, 240)
+            )
+
             if op <= 0.0 or active_text is None:
                 painter.setPen(QColor(0, 0, 0, 160))
                 painter.drawText(
                     size_rect.adjusted(0, 1, 0, 1),
                     Qt.AlignmentFlag.AlignCenter,
-                    self.file_size_text,
+                    center_size_str,
                 )
-                painter.setPen(QColor(210, 215, 225, 240))
+                painter.setPen(normal_size_color)
                 painter.drawText(
-                    size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text
+                    size_rect, Qt.AlignmentFlag.AlignCenter, center_size_str
                 )
             elif op >= 1.0:
                 size_color = (
@@ -2709,11 +2751,15 @@ class DonutWindow(QWidget):
                 painter.drawText(
                     size_rect.adjusted(0, 1, 0, 1),
                     Qt.AlignmentFlag.AlignCenter,
-                    self.file_size_text,
+                    center_size_str,
                 )
-                painter.setPen(QColor(210, 215, 225, file_alpha))
+                painter.setPen(
+                    QColor(251, 191, 36, file_alpha)
+                    if self.is_already_small
+                    else QColor(210, 215, 225, file_alpha)
+                )
                 painter.drawText(
-                    size_rect, Qt.AlignmentFlag.AlignCenter, self.file_size_text
+                    size_rect, Qt.AlignmentFlag.AlignCenter, center_size_str
                 )
 
                 pred_color = QColor(165, 225, 255) if is_ok else QColor(251, 191, 36)

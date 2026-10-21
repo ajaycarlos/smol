@@ -40,7 +40,8 @@ def test_nemo_install_creates_actions_and_submenu(tmp_path: Path):
     assert "Name=100 KB" in content
     assert "Exec=/custom/bin/smol shrink --notify --max 100KB -- %F" in content
     assert "Quote=double" in content
-    assert "Extensions=jpg;jpeg;png;webp;heic;avif;" in content
+    assert "Extensions=jpg;jpeg;png;webp;heic;pdf;" in content
+    assert "avif" not in content
 
     # Verify actions-tree.json created with submenu
     tree_file = config_dir / "actions-tree.json"
@@ -313,6 +314,43 @@ def test_file_manager_integrations_include_pdf(tmp_path: Path):
     thunar_content = thunar_uca.read_text(encoding="utf-8")
     assert "*.pdf;" in thunar_content
     assert "<other-files" in thunar_content
+
+
+def test_nemo_actions_generated_from_sizes_ladder_only(tmp_path: Path):
+    """Nemo actions must be generated from sizes.ladder, ignoring pinned and recents."""
+    from smol.config import SmolConfig, save_config
+
+    cfg_file = tmp_path / "config.toml"
+    cfg = SmolConfig()
+    cfg.sizes.ladder = [20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000, 2_000_000]
+    cfg.sizes.pinned = [300_000, 400_000]
+    cfg.sizes.recents = [750_000]
+    save_config(cfg, cfg_file)
+
+    actions_dir = tmp_path / "nemo" / "actions"
+    config_dir = tmp_path / "config" / "nemo"
+    integrator = NemoIntegrator(
+        actions_dir=actions_dir,
+        config_dir=config_dir,
+        config_path=cfg_file,
+    )
+    result = integrator.install()
+    assert result.ok is True
+
+    # Exactly 7 ladder sizes installed; pinned (300k, 400k) and recents (750k) excluded
+    action_files = list(actions_dir.glob("smol_shrink_*.nemo_action"))
+    assert len(action_files) == 7
+    slugs = [f.name for f in action_files]
+    assert "smol_shrink_300kb.nemo_action" not in slugs
+    assert "smol_shrink_400kb.nemo_action" not in slugs
+    assert "smol_shrink_750kb.nemo_action" not in slugs
+    assert "smol_shrink_100kb.nemo_action" in slugs
+
+    # Nemo extension check is case-insensitive in Nemo documentation
+    sample_content = (actions_dir / "smol_shrink_100kb.nemo_action").read_text()
+    assert "Extensions=jpg;jpeg;png;webp;heic;pdf;" in sample_content
+    assert "avif" not in sample_content
+
 
 
 

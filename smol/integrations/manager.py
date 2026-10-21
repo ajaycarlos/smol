@@ -59,11 +59,11 @@ def _atomic_write_xml(path: Path, tree: ET.ElementTree) -> None:
 def get_integration_sizes(
     config_path: Path | str | None = None,
 ) -> list[tuple[str, str, str]]:
-    """Return list of (size_arg, label, slug) generated from configured sizes."""
+    """Return list of (size_arg, label, slug) generated from configured ladder sizes."""
     cfg = load_config(config_path)
-    sizes = cfg.sizes
+    ladder = cfg.sizes.ladder if hasattr(cfg.sizes, "ladder") else cfg.sizes
     res: list[tuple[str, str, str]] = []
-    for sz in sizes:
+    for sz in ladder:
         arg = format_size(sz, spaced=False)
         label = format_size(sz, spaced=True)
         slug = arg.lower()
@@ -163,7 +163,7 @@ class NemoIntegrator:
             action_path = self.actions_dir / filename
             action_uuids.append(filename)
 
-            # Generate nemo_action content
+            # Generate nemo_action content (Extensions in Nemo are case-insensitive)
             bin_cmd = f'"{self.smol_bin}"' if " " in self.smol_bin else self.smol_bin
             content = (
                 "[Nemo Action]\n"
@@ -173,7 +173,7 @@ class NemoIntegrator:
                 f"Exec={bin_cmd} shrink --notify --max {size_arg} -- %F\n"
                 "Icon-Name=image-x-generic\n"
                 "Selection=notnone\n"
-                "Extensions=jpg;jpeg;png;webp;heic;avif;pdf;\n"
+                "Extensions=jpg;jpeg;png;webp;heic;pdf;\n"
                 "Quote=double\n"
             )
 

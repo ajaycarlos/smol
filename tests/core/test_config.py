@@ -53,7 +53,8 @@ def test_load_config_corrupted(tmp_path: Path) -> None:
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text("invalid [[ toml content ///", encoding="utf-8")
 
-    cfg = load_config(config_file)
+    with pytest.warns(UserWarning, match="Failed to read or parse config"):
+        cfg = load_config(config_file)
     assert cfg == {"custom_sizes": [], "reduce_motion": False}
 
 

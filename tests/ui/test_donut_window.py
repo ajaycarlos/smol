@@ -653,3 +653,72 @@ def test_donut_esc_cancels_active_worker(qapp, samples_dir: Path, tmp_path: Path
     assert len(outputs) == 0
     win.close()
 
+
+def test_donut_too_small_segment_stays_clickable(qapp, samples_dir):
+    """Segments dimmed as 'too small for this file' stay clickable and run engine."""
+    portrait = samples_dir / "portrait.jpg"
+    win = DonutWindow([portrait])
+    win.show()
+
+    # Simulate floor estimated at 50 KB -> 20 KB is below floor
+    win._floor_bytes = 50_000
+    win._update_segment_dimming()
+
+    seg_20k = next(s for s in win.segments if s.target_bytes == 20_000)
+    assert not seg_20k.enabled
+    assert seg_20k.clickable is True
+    assert "too small for this file" in (seg_20k.reason or "")
+
+    # Segments larger than the file are not clickable
+    seg_2m = next(s for s in win.segments if s.target_bytes == 2_000_000)
+    assert not seg_2m.enabled
+    assert seg_2m.clickable is False
+    assert seg_2m.reason == "larger than the file"
+
+    # Clicking the too small segment triggers shrink
+    center = QPointF(win.width() / 2.0, win.height() / 2.0)
+    ax, ay = win.geometry_calc.label_anchors[seg_20k.index]
+    click_pos = center + QPointF(ax, ay)
+
+    event = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress,
+        click_pos,
+        click_pos,
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    win.mousePressEvent(event)
+
+    # Worker thread started for 20 KB
+    assert win._chosen_segment_idx == seg_20k.index
+    assert win._shrink_worker is not None
+    win._shrink_worker.wait(5000)
+    assert win.state in ("working", "success", "failure")
+    win.close()
+
+
+def test_donut_12kb_file_classic_mode_displays_already_small(
+    qapp, samples_dir, tmp_path
+):
+    """A 12 KB file in Classic mode displays 'Already small' in the center."""
+    small_file = tmp_path / "small_12kb.jpg"
+    small_file.write_bytes(b"\xff\xd8\xff" + b"\x00" * 11997)  # 12,000 bytes
+
+    win = DonutWindow([small_file])
+    win.show()
+
+    # In Classic mode, all ladder sizes (20k..2M) are larger than 12KB
+    assert win.is_already_small is True
+    for seg in win.segments:
+        if seg.target_bytes is not None:
+            assert not seg.clickable
+            assert seg.reason == "larger than the file"
+
+    # Paint headless to verify rendering doesn't crash
+    pixmap = QPixmap(win.size())
+    win.render(pixmap)
+    assert not pixmap.isNull()
+    win.close()
+
+

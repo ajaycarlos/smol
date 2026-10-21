@@ -1245,6 +1245,9 @@ class SettingsWindow(QWidget):
             _extra_keys=dict(self._config._extra_keys),
         )
 
+        old_ladder = list(getattr(self._config.sizes, "ladder", []))
+        ladder_changed = (ladder != old_ladder)
+
         save_config(updated_config, self.config_path)
         self._config = updated_config
 
@@ -1255,7 +1258,30 @@ class SettingsWindow(QWidget):
         else:
             integrator.uninstall()
 
-        self.status_banner.setText("✓ Settings saved successfully.")
+        # Synchronize right-click actions if ladder changed
+        banner_msg = "✓ Settings saved successfully."
+        if ladder_changed:
+            from smol.integrations.manager import NemoIntegrator
+
+            nemo_mgr = NemoIntegrator(config_path=self.config_path)
+            rerun_hint = (
+                "✓ Settings saved. "
+                "(Re-run 'smol integrate install' to update right-click menu)."
+            )
+            try:
+                st = nemo_mgr.status()
+                if st.installed or st.partial:
+                    nemo_mgr.install()
+                    banner_msg = (
+                        "✓ Settings saved. "
+                        "Right-click actions regenerated for updated ladder."
+                    )
+                else:
+                    banner_msg = rerun_hint
+            except (OSError, KeyError, ValueError):
+                banner_msg = rerun_hint
+
+        self.status_banner.setText(banner_msg)
         self.status_banner.setStyleSheet(
             "background-color: #064e3b; border: 1px solid #10b981; "
             "color: #d1fae5; border-radius: 6px; padding: 8px 12px; "

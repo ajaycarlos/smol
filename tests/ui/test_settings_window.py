@@ -405,3 +405,28 @@ def test_settings_window_ring_mode_switch_and_persistence(qapp, tmp_path):
         window.close()
         window.deleteLater()
         qapp.processEvents()
+
+
+def test_settings_window_ladder_change_syncs_right_click_actions(qapp, tmp_path):
+    """Test saving modified ladder in Settings regenerates actions or shows hint."""
+    cfg_file = tmp_path / "config.toml"
+    window = SettingsWindow(config_path=cfg_file)
+    try:
+        # Change ladder sizes in editor
+        window.ladder_editor.set_sizes([30_000, 60_000, 120_000])
+
+        with patch("smol.ui.settings_window.AutostartIntegrator"):
+            saved = window.save()
+            assert saved is True
+
+        banner_text = window.status_banner.text()
+        assert "Settings saved" in banner_text
+        assert (
+            "Right-click actions regenerated" in banner_text
+            or "re-run 'smol integrate install'" in banner_text.lower()
+        )
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()
+

@@ -223,3 +223,50 @@ def test_estimate_floor_pdf(samples_dir: Path):
     assert est.source == "estimate"
     assert est.bytes > 0
     assert est.bytes < pdf_path.stat().st_size
+
+
+def test_estimate_floor_conservative_across_all_samples(samples_dir: Path):
+    """estimate_floor must never exceed true smallest achievable size."""
+    import re
+
+    from smol.core.router import shrink_file
+
+    sample_names = [
+        "portrait.jpg",
+        "landscape.jpg",
+        "screenshot.png",
+        "forty_mp.jpg",
+        "grayscale.jpg",
+        "already_small.jpg",
+        "photo.webp",
+        "sample_scanned.pdf",
+    ]
+
+    for name in sample_names:
+        sample_path = samples_dir / name
+        if not sample_path.exists():
+            continue
+        est = estimate_floor(sample_path)
+        res = shrink_file(sample_path, target_bytes=1000)
+
+        true_smallest = None
+        if not res.ok and res.error:
+            m = re.search(r"~([0-9,.]+)\s*(bytes|KB|MB)", res.error)
+            if m:
+                val = float(m.group(1).replace(",", ""))
+                unit = m.group(2)
+                if unit == "bytes":
+                    true_smallest = int(val)
+                elif unit == "KB":
+                    true_smallest = int(val * 1000)
+                elif unit == "MB":
+                    true_smallest = int(val * 1_000_000)
+        if true_smallest is None and res.final_bytes:
+            true_smallest = res.final_bytes
+
+        assert true_smallest is not None, (
+            f"Could not determine true smallest for {name}"
+        )
+        assert (
+            est.bytes <= true_smallest
+        ), f"estimate_floor({name})={est.bytes} > true smallest {true_smallest}!"

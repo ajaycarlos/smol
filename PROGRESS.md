@@ -536,6 +536,14 @@ Final QA pass complete (all checks green, 0 blockers); ready for v1.0 release.
     * Full git history audit confirms 0 deleted or weakened tests (video/audio deferred per D-005).
     * Full test suite: 453 passed, 0 failed, 0 skipped.
     * Ruff linter: clean (0 warnings).
+- Close gaps found in QA (P10.6b):
+  - Made `estimate_floor()` strictly conservative: JPEG probe applies `subsampling="4:2:0"` with 0.90 margin; PDF uses 1.2% / 15 KB heuristic. Validated `estimate_floor <= true_smallest` on all 8 real samples with regression tests in `tests/core/test_suggest.py`.
+  - Updated `DonutWindow`: segments dimmed as "too small for this file" stay clickable (triggering honest engine failure and "Use smallest possible" retry). Only segments "larger than the file" are unclickable.
+  - Fixed Nemo right-click actions: generated strictly from `sizes.ladder` (default 7 sizes, excluding pinned/recents); removed `avif` from `Extensions=` (`jpg;jpeg;png;webp;heic;pdf;`); documented case-insensitivity in Nemo documentation; wired Settings ladder changes to auto-regenerate installed actions or display re-run hint.
+  - Optimized daemon idle CPU: switched X11 listener to adaptive interval (80 ms on activity, 100 ms when quiescent, 1000 ms heartbeat), reducing 30s idle CPU from 0.67% to 0.47% with warm donut latency of 25.21 ms (< 150 ms target).
+  - Fixed all 9 pytest warnings: wrapped expected invalid config inputs in `pytest.warns(UserWarning)` in `tests/core/test_config.py` and `tests/test_security_audit.py`. Full test suite now runs with 0 warnings.
+  - Added "Already small" center display in `DonutWindow` for files smaller than all ladder presets (e.g. 12 KB in Classic mode).
+  - VERIFY: 458 passed tests in 48.4s; 0 warnings; ruff clean; 0 deleted or weakened tests.
 
 ## Next
 - Tag and publish v1.0 release.

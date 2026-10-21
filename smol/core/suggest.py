@@ -329,8 +329,9 @@ def estimate_floor(
     file_size = src_path.stat().st_size
 
     if ext == ".pdf":
-        # Conservative heuristic: 20% of file size, minimum 10 KB
-        est_bytes = max(10_000, int(file_size * 0.20))
+        # Conservative heuristic for PDFs: Ghostscript downsamples scanned pages
+        # at 60 DPI JPEG q50 (~15-20 KB/page). Must never overestimate floor.
+        est_bytes = min(file_size, max(15_000, int(file_size * 0.012)))
         return FloorEstimate(bytes=est_bytes, source="estimate")
 
     # Images
@@ -368,9 +369,19 @@ def estimate_floor(
                     img = white_bg
                 elif img.mode != "RGB":
                     img = img.convert("RGB")
-                img.save(buf, format="JPEG", quality=60, optimize=True)
+                img.save(
+                    buf,
+                    format="JPEG",
+                    quality=60,
+                    optimize=True,
+                    subsampling="4:2:0",
+                )
 
-            return FloorEstimate(bytes=len(buf.getvalue()), source="predicted")
+            # Conservative margin (90% of probe) ensures estimate is never
+            # higher than true smallest achievable size found by core engine.
+            raw_probe = len(buf.getvalue())
+            est_bytes = max(1, int(raw_probe * 0.90))
+            return FloorEstimate(bytes=est_bytes, source="predicted")
     except (OSError, ValueError, Image.DecompressionBombError):
         # Fallback if image probe decode fails or decompression bomb is encountered
         return FloorEstimate(

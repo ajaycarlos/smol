@@ -255,7 +255,8 @@ def test_config_validation_rejects_nan_inf_huge_values() -> None:
     ]
 
     for hc in hostile_configs:
-        validated = validate_config_dict(hc)
+        with pytest.warns(UserWarning, match="Invalid config value"):
+            validated = validate_config_dict(hc)
         # All ladder sizes must be reasonable positive ints (< 100 GB)
         for s in validated["sizes"]["ladder"]:
             assert isinstance(s, int)
