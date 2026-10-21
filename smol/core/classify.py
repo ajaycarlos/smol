@@ -239,9 +239,11 @@ def classify(path_or_uri: str | Path) -> Classification:
             path=local_path,
         )
 
-    # Read at most 32 bytes for header sniffing
+    # Read at most 32 bytes for header sniffing using non-blocking read to prevent hangs
     try:
-        with open(local_path, "rb") as f:
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(local_path, flags)
+        with open(fd, "rb", closefd=True) as f:
             header = f.read(32)
     except PermissionError:
         return Classification(
@@ -250,7 +252,7 @@ def classify(path_or_uri: str | Path) -> Classification:
             mismatch_note=None,
             path=local_path,
         )
-    except OSError as e:
+    except (BlockingIOError, OSError) as e:
         return Classification(
             kind="unreadable", reason=str(e), mismatch_note=None, path=local_path
         )

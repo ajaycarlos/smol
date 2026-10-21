@@ -8,7 +8,9 @@ schema versioning (v1), migrations, and safe defaults.
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
 import shutil
 import tempfile
 import tomllib
@@ -20,6 +22,19 @@ from typing import Any
 import tomli_w
 
 logger = logging.getLogger(__name__)
+
+
+def _is_valid_size_int(val: Any, max_val: int = 100_000_000_000) -> bool:
+    """Check if value is a valid positive integer under max_val (default 100 GB)."""
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return False
+    if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+        return False
+    try:
+        int_val = int(val)
+        return 0 < int_val <= max_val
+    except (ValueError, OverflowError):
+        return False
 
 DEFAULT_LADDER: list[int] = [
     20_000,
@@ -305,10 +320,7 @@ def _validate_sizes_table(raw_sizes: Any) -> dict[str, list[int]]:
 
     if isinstance(raw_sizes, list):
         # Migrated or flat list representation
-        if len(raw_sizes) > 0 and all(
-            isinstance(s, (int, float)) and int(s) > 0 and not isinstance(s, bool)
-            for s in raw_sizes
-        ):
+        if len(raw_sizes) > 0 and all(_is_valid_size_int(s) for s in raw_sizes):
             valid_ladder = [int(s) for s in raw_sizes[:7]]
         else:
             _warn_and_fallback(
@@ -342,10 +354,7 @@ def _validate_sizes_table(raw_sizes: Any) -> dict[str, list[int]]:
         if (
             isinstance(val, list)
             and len(val) > 0
-            and all(
-                isinstance(s, (int, float)) and int(s) > 0 and not isinstance(s, bool)
-                for s in val
-            )
+            and all(_is_valid_size_int(s) for s in val)
         ):
             valid_ladder = [int(s) for s in val[:7]]
         else:
@@ -359,10 +368,7 @@ def _validate_sizes_table(raw_sizes: Any) -> dict[str, list[int]]:
     # 2. pinned (max 12)
     if "pinned" in raw_sizes:
         val = raw_sizes["pinned"]
-        if isinstance(val, list) and all(
-            isinstance(s, (int, float)) and int(s) > 0 and not isinstance(s, bool)
-            for s in val
-        ):
+        if isinstance(val, list) and all(_is_valid_size_int(s) for s in val):
             valid_pinned = [int(s) for s in val[:12]]
         else:
             _warn_and_fallback(
@@ -375,10 +381,7 @@ def _validate_sizes_table(raw_sizes: Any) -> dict[str, list[int]]:
     # 3. recents (max 5)
     if "recents" in raw_sizes:
         val = raw_sizes["recents"]
-        if isinstance(val, list) and all(
-            isinstance(s, (int, float)) and int(s) > 0 and not isinstance(s, bool)
-            for s in val
-        ):
+        if isinstance(val, list) and all(_is_valid_size_int(s) for s in val):
             valid_recents = [int(s) for s in val[:5]]
         else:
             _warn_and_fallback(
@@ -429,14 +432,10 @@ def _validate_suggest_table(raw_suggest: Any) -> dict[str, Any]:
 
     # pool
     if "pool" in raw_suggest:
-        val = raw_suggest["pool"]
         if (
             isinstance(val, list)
             and len(val) > 0
-            and all(
-                isinstance(s, (int, float)) and int(s) > 0 and not isinstance(s, bool)
-                for s in val
-            )
+            and all(_is_valid_size_int(s) for s in val)
         ):
             valid_pool = [int(s) for s in val]
         else:
@@ -505,14 +504,14 @@ def validate_config_dict(raw_data: dict[str, Any]) -> dict[str, Any]:
     # trigger_key
     if "trigger_key" in raw_data:
         val = raw_data["trigger_key"]
-        if isinstance(val, str) and val.strip():
-            validated["trigger_key"] = val.strip()
+        if isinstance(val, str) and val.strip() and len(val.strip()) <= 100:
+            validated["trigger_key"] = re.sub(r"[\r\n\x00-\x1f]", "", val.strip())
         else:
             _warn_and_fallback(
                 "trigger_key",
                 val,
                 DEFAULT_CONFIG["trigger_key"],
-                "Must be a non-empty string. ",
+                "Must be a non-empty string (max 100 chars). ",
             )
 
     # sizes
@@ -539,27 +538,27 @@ def validate_config_dict(raw_data: dict[str, Any]) -> dict[str, Any]:
     # output_folder
     if "output_folder" in raw_data:
         val = raw_data["output_folder"]
-        if isinstance(val, str):
-            validated["output_folder"] = val
+        if isinstance(val, str) and len(val) <= 1000:
+            validated["output_folder"] = re.sub(r"[\r\n\x00-\x1f]", "", val)
         else:
             _warn_and_fallback(
                 "output_folder",
                 val,
                 DEFAULT_CONFIG["output_folder"],
-                "Must be a string. ",
+                "Must be a string (max 1000 chars). ",
             )
 
     # naming_pattern
     if "naming_pattern" in raw_data:
         val = raw_data["naming_pattern"]
-        if isinstance(val, str) and val.strip():
-            validated["naming_pattern"] = val
+        if isinstance(val, str) and val.strip() and len(val.strip()) <= 500:
+            validated["naming_pattern"] = re.sub(r"[\r\n\x00-\x1f]", "", val.strip())
         else:
             _warn_and_fallback(
                 "naming_pattern",
                 val,
                 DEFAULT_CONFIG["naming_pattern"],
-                "Must be a non-empty pattern string. ",
+                "Must be a non-empty pattern string (max 500 chars). ",
             )
 
     # keep_format
@@ -601,14 +600,19 @@ def validate_config_dict(raw_data: dict[str, Any]) -> dict[str, Any]:
     # min_side
     if "min_side" in raw_data:
         val = raw_data["min_side"]
-        if isinstance(val, int) and not isinstance(val, bool) and val >= 1:
-            validated["min_side"] = val
+        if (
+            isinstance(val, (int, float))
+            and not isinstance(val, bool)
+            and not (isinstance(val, float) and (math.isnan(val) or math.isinf(val)))
+            and 1 <= int(val) <= 100_000
+        ):
+            validated["min_side"] = int(val)
         else:
             _warn_and_fallback(
                 "min_side",
                 val,
                 DEFAULT_CONFIG["min_side"],
-                "Must be a positive integer greater than or equal to 1. ",
+                "Must be a positive integer between 1 and 100,000. ",
             )
 
     # reduce_motion
@@ -755,14 +759,22 @@ def load_config(config_path: Path | str | None = None) -> SmolConfig:
         valid_dict = validate_config_dict(data)
 
         # Write migrated config to disk
+        temp_path: Path | None = None
         try:
             content = tomli_w.dumps(valid_dict)
             with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as tf:
                 tf.write(content.encode("utf-8"))
                 temp_path = Path(tf.name)
             temp_path.replace(path)
+            temp_path = None
         except OSError as exc:
             logger.warning(f"Could not write migrated config to {path}: {exc}")
+        finally:
+            if temp_path is not None and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
 
         return SmolConfig(**_split_config_and_extras(valid_dict))
 
@@ -776,7 +788,11 @@ def save_config(
 ) -> None:
     """Save configuration to disk atomically using tomli-w."""
     path = get_config_path(config_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
 
     if isinstance(config, SmolConfig):
         raw_dict = config.to_dict()
@@ -792,11 +808,20 @@ def save_config(
     content = tomli_w.dumps(clean_dict)
 
     # Atomic write via temporary file in the same directory
-    with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as tf:
-        tf.write(content.encode("utf-8"))
-        temp_path = Path(tf.name)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as tf:
+            tf.write(content.encode("utf-8"))
+            temp_path = Path(tf.name)
 
-    temp_path.replace(path)
+        temp_path.replace(path)
+        temp_path = None
+    finally:
+        if temp_path is not None and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 def _is_within_5_percent(a: int, b: int) -> bool:

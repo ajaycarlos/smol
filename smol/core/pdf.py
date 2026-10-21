@@ -13,6 +13,7 @@ Implements PLAN.md section 7.2:
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import subprocess
@@ -156,6 +157,7 @@ def shrink_pdf(
             # ALWAYS pass list arguments, NEVER a shell string
             gs_cmd = [
                 gs_bin,
+                "-dSAFER",
                 "-dNOPAUSE",
                 "-dBATCH",
                 "-dQUIET",
@@ -183,7 +185,7 @@ def shrink_pdf(
                     f"/GrayImageDict << /QFactor {qfactor:.2f} >> >> setdistillerparams"
                 ),
                 "-f",
-                str(src_path),
+                str(src_path.resolve()),
             ]
 
             try:
@@ -333,10 +335,16 @@ def shrink_pdf(
                     temp_dest.unlink()
                 except OSError:
                     pass
+            if getattr(exc, "errno", None) == errno.ENOSPC:
+                err_msg = (
+                    "Disk is full (no space left on device); cannot write output file."
+                )
+            else:
+                err_msg = f"Failed to write output file: {exc}"
             return Result(
                 ok=False,
                 original_bytes=orig_bytes,
-                error=f"Failed to write output file: {exc}",
+                error=err_msg,
             )
 
         # Post-write disk verification: size must be <= target_bytes

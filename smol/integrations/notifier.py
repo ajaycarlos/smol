@@ -1,5 +1,5 @@
-"""Desktop notification dispatcher with notify-send and terminal fallback."""
-
+import html
+import re
 import shutil
 import subprocess
 import threading
@@ -28,13 +28,17 @@ def format_notification(results: list[tuple[Path, Result]]) -> tuple[str, str, s
 
     if len(results) == 1:
         src_path, res = results[0]
+        # Neutralize control characters and newlines in filenames
+        clean_name = (
+            re.sub(r"[\r\n\x00-\x1f]", " ", src_path.name).strip() or src_path.name
+        )
         if res.ok:
             orig_str = format_size(res.original_bytes, spaced=True)
             final_str = format_size(res.final_bytes, spaced=True)
-            body = f"{src_path.name}: {orig_str} → {final_str}"
+            body = f"{clean_name}: {orig_str} → {final_str}"
             urgency = "normal"
         else:
-            body = res.error or f"Failed to shrink {src_path.name}"
+            body = res.error or f"Failed to shrink {clean_name}"
             urgency = "critical"
         return summary, body, urgency
 
@@ -68,12 +72,26 @@ def send_notification(
 ) -> bool:
     """Send desktop notification via notify-send, falling back to terminal.
 
+    Guarantees safe invocation using '--' separator and XML/HTML escaping.
     Returns True if notify-send succeeded, False if fallen back to terminal.
     """
+    safe_summary = html.escape(summary)
+    safe_body = html.escape(body)
     if shutil.which("notify-send"):
+        cmd = [
+            "notify-send",
+            "-u",
+            urgency,
+            "-a",
+            app_name,
+        ]
+        if safe_summary.startswith("-"):
+            cmd.append("--")
+        cmd.extend([safe_summary, safe_body])
+
         try:
             subprocess.run(
-                ["notify-send", "-u", urgency, "-a", app_name, summary, body],
+                cmd,
                 check=True,
             )
             return True

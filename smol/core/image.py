@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import io
 import math
 import os
@@ -764,10 +765,16 @@ def shrink_image(
     except OSError as exc:
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
+        if getattr(exc, "errno", None) == errno.ENOSPC:
+            err_msg = (
+                "Disk is full (no space left on device); cannot write output file."
+            )
+        else:
+            err_msg = f"Failed to write output atomically: {exc}"
         return Result(
             ok=False,
             original_bytes=original_bytes,
-            error=f"Failed to write output atomically: {exc}",
+            error=err_msg,
         )
 
     final_bytes = dest_path.stat().st_size

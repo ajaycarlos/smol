@@ -215,6 +215,7 @@ def _load_thumbnail_pixmap(path: Path, max_size: int = 70) -> QPixmap | None:
                 res = subprocess.run(
                     [
                         gs_bin,
+                        "-dSAFER",
                         "-dNOPAUSE",
                         "-dBATCH",
                         "-dQUIET",
@@ -223,7 +224,8 @@ def _load_thumbnail_pixmap(path: Path, max_size: int = 70) -> QPixmap | None:
                         "-dLastPage=1",
                         "-r72",
                         "-sOutputFile=-",
-                        str(path),
+                        "-f",
+                        str(path.resolve()),
                     ],
                     check=False,
                     capture_output=True,
@@ -262,6 +264,8 @@ def _load_thumbnail_pixmap(path: Path, max_size: int = 70) -> QPixmap | None:
                 QImage.Format.Format_RGBA8888,
             )
             return QPixmap.fromImage(qimage)
+    except Image.DecompressionBombError:
+        return None
     except (OSError, ValueError, RuntimeError):
         pass
 
@@ -563,7 +567,8 @@ class DonutWindow(QWidget):
             self.thumbnail_pixmap = None
         elif len(self.file_paths) == 1:
             first = self.file_paths[0]
-            self.file_name = first.name
+            clean_name = re.sub(r"[\r\n\x00-\x1f]", " ", first.name).strip()
+            self.file_name = clean_name if clean_name else first.name
             self.file_size_text = format_size(self.total_bytes, spaced=True)
             self.thumbnail_pixmap = _load_thumbnail_pixmap(first, max_size=64)
         else:

@@ -1,9 +1,24 @@
-from __future__ import annotations
-
+import re
 from pathlib import Path
 
 from smol.config import load_config
 from smol.core.size import format_size, parse_size
+
+
+def sanitize_filename_component(name: str) -> str:
+    """Sanitize a filename component.
+
+    Removes control chars, newlines, and path separators.
+    """
+    # Replace newlines, control characters, null bytes, and path separators
+    sanitized = re.sub(r"[\r\n\x00-\x1f/\\]", "_", name)
+    # Remove leading dots to prevent hidden files or traversal artifacts
+    while sanitized.startswith("."):
+        sanitized = sanitized[1:]
+    # Remove any traversal sequences like '..'
+    sanitized = re.sub(r"\.\.+", "_", sanitized)
+    sanitized = sanitized.strip()
+    return sanitized or "file"
 
 
 def output_path(
@@ -20,6 +35,7 @@ def output_path(
     provided. Default pattern: `{name}_{size}{ext}`
     On collision: `<formatted_name>-1.<ext>`, `<formatted_name>-2.<ext>`, etc.
     Never overwrites the original or any existing file.
+    Guarantees no path traversal or directory escaping.
     """
     src_path = Path(src)
     if isinstance(target_bytes, (int, float)):
@@ -39,11 +55,17 @@ def output_path(
     else:
         parent = src_path.parent
 
-    stem = src_path.stem
+    # Sanitize stem
+    stem = sanitize_filename_component(src_path.stem)
+
     if ext is not None:
-        suffix = ext if ext.startswith(".") else f".{ext}"
+        raw_ext = ext if ext.startswith(".") else f".{ext}"
+        suffix = "." + sanitize_filename_component(raw_ext.lstrip("."))
+    elif src_path.suffix:
+        clean_ext = sanitize_filename_component(src_path.suffix.lstrip("."))
+        suffix = f".{clean_ext}"
     else:
-        suffix = src_path.suffix
+        suffix = ""
 
     effective_pattern = (
         pattern
@@ -52,12 +74,20 @@ def output_path(
     )
 
     try:
-        filename = effective_pattern.format(name=stem, size=size_label, ext=suffix)
-    except KeyError:
+        raw_filename = effective_pattern.format(name=stem, size=size_label, ext=suffix)
+    except (KeyError, ValueError):
         # Fallback to standard pattern if custom pattern contains invalid keys
-        filename = f"{stem}_{size_label}{suffix}"
+        raw_filename = f"{stem}_{size_label}{suffix}"
 
-    candidate = parent / filename
+    # Enforce strictly the final filename component (no slashes, no traversal)
+    clean_name = Path(raw_filename).name
+    # Strip any remaining control chars, path separators, or traversal artifacts
+    clean_name = re.sub(r"[\r\n\x00-\x1f/\\]", "_", clean_name)
+    clean_name = re.sub(r"\.\.+", "_", clean_name).strip()
+    if not clean_name or clean_name in (".", ".."):
+        clean_name = f"{stem}_{size_label}{suffix}"
+
+    candidate = parent / clean_name
     if not candidate.exists():
         return candidate
 

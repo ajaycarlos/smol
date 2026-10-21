@@ -3,7 +3,7 @@
 Agents: update this after EVERY task. Keep it short and current. New sessions rely on it.
 
 ## Current milestone
-v1.0 Feature Freeze / Pre-audit baseline (v0.9.0).
+P10.1 Security audit and hardening (complete); ready for packaging and v1.0 release.
 
 ## Environment
 - Distro / desktop / session type: Linux / X-Cinnamon / x11
@@ -434,9 +434,23 @@ v1.0 Feature Freeze / Pre-audit baseline (v0.9.0).
   - Synchronized package and CLI versions to 0.9.0 across `pyproject.toml`, `smol/cli.py`, `tests/test_basic.py`, and `uv.lock`.
   - Updated `PLAN.md` to reflect completion of sequence Q0 through A5 and Feature Freeze.
   - VERIFY: ruff clean, 416 tests green, `smol --version` reports 0.9.0, tagged `v0.9.0`.
+- Security and robustness audit (P10.1):
+  - Fixed subprocess invocation security: added `-dSAFER` to Ghostscript in `smol/core/pdf.py` and `smol/ui/donut_window.py`; guarded leading-dash filenames with resolved absolute paths and `--` separators; validated zero shell=True calls across codebase.
+  - Fixed path traversal in `smol/core/paths.py`: added `sanitize_filename_component` stripping `/`, `\\`, `..`, leading dots, and control characters from dynamic naming pattern components.
+  - Fixed HTML/rich-text injection: escaped filenames via `html.escape` in `smol/ui/toast.py` and neutralized newlines/control characters in `smol/ui/donut_window.py` and `smol/integrations/notifier.py`.
+  - Fixed log spoofing and injection: added `sanitize_for_log` in `smol/daemon/service.py` stripping ANSI sequences, control characters, and newlines.
+  - Hardened config validation in `smol/config.py`: blocked `NaN`, `Infinity`, negative numbers, and values >100 GB; restricted config/state directories to `0o700` and daemon logs to `0o600`.
+  - Hardened temp file lifecycle: ensured unpredictable names via `tempfile.NamedTemporaryFile` with `try...finally` unlinking across `config.py`, `image.py`, `pdf.py`, `autostart.py`, and `manager.py`.
+  - Hardened error handling for disk exhaustion: added clean recovery for `errno.ENOSPC` with honest failure results and zero dangling files.
+  - Protected against FIFO TOCTOU hangs: added `os.O_NONBLOCK` when sniffing file headers in `smol/core/classify.py`.
+  - Protected against decompression bombs: caught `Image.DecompressionBombError` in `smol/ui/donut_window.py` and `smol/core/suggest.py`, avoiding Qt pixmap abort crashes and falling back to safe heuristics.
+  - Hardened desktop integrations: properly quoted binary paths with spaces and added backup copy protection for corrupted Thunar XML files.
+  - Authored `SECURITY.md` (1-page threat model: what smol protects against, what it does not protect against, reporting policy).
+  - Created 15 dedicated security tests in `tests/test_security_audit.py`.
+  - VERIFY: hostile filenames (`-rf weird 'name".jpg` and newline filenames) tested and verified; 431 tests passing; ruff check clean.
 
 ## Next
-- P10.1 security audit, packaging (AppImage + .deb), docs, CI, QA, release.
+- Packaging (AppImage + .deb), docs, CI, QA, v1.0 release.
 
 ## Decisions
 - 2026-10-20 (D-003): v1.0 hold-key donut runs on X11 only (Path A, python-xlib). Right-click and the CLI work on any session.

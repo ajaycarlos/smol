@@ -371,8 +371,8 @@ def estimate_floor(
                 img.save(buf, format="JPEG", quality=60, optimize=True)
 
             return FloorEstimate(bytes=len(buf.getvalue()), source="predicted")
-    except (OSError, ValueError):
-        # Fallback if image probe decode fails
+    except (OSError, ValueError, Image.DecompressionBombError):
+        # Fallback if image probe decode fails or decompression bomb is encountered
         return FloorEstimate(
             bytes=max(5_000, int(file_size * 0.15)),
             source="estimate",

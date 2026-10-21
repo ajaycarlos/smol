@@ -9,6 +9,7 @@ Displays completion state after shrinking:
 
 from __future__ import annotations
 
+import html
 import logging
 from pathlib import Path
 
@@ -250,10 +251,11 @@ class ToastWindow(QWidget):
             src, res = shrunk_items[0]
             orig_sz = format_size(res.original_bytes, spaced=True)
             final_sz = format_size(res.final_bytes, spaced=True)
+            safe_name = html.escape(src.name)
             # "photo.jpg  1.02 MB → 97 KB"
             msg = (
                 f"<span style='color: #ffffff; font-weight: 700; font-size: 13px;'>"
-                f"{src.name}</span> &nbsp;&nbsp; "
+                f"{safe_name}</span> &nbsp;&nbsp; "
                 f"<span style='color: #94a3b8; font-size: 12px;'>{orig_sz}</span> "
                 f"<span style='color: #64748b; font-size: 11px;'>→</span> "
                 f"<span style='color: #38bdf8; font-weight: 700; font-size: 12px;'>"
@@ -276,9 +278,10 @@ class ToastWindow(QWidget):
         elif small_items:
             src, res = small_items[0]
             sz = format_size(res.original_bytes, spaced=True)
+            safe_name = html.escape(src.name)
             msg = (
                 f"<span style='color: #ffffff; font-weight: 700; font-size: 13px;'>"
-                f"{src.name}</span> &nbsp;&nbsp; "
+                f"{safe_name}</span> &nbsp;&nbsp; "
                 f"<span style='color: #34d399; font-weight: 600; font-size: 12px;'>"
                 f"Already ≤ target ({sz})</span>"
             )
@@ -289,7 +292,7 @@ class ToastWindow(QWidget):
             )
 
         if self.skipped_files:
-            skipped_names = ", ".join(f.name for f in self.skipped_files)
+            skipped_names = ", ".join(html.escape(f.name) for f in self.skipped_files)
             msg += (
                 f"<br><span style='color: #f87171; font-size: 11px;'>"
                 f"Skipped: {skipped_names}</span>"

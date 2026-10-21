@@ -11,6 +11,7 @@ import fcntl
 import logging
 import logging.handlers
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -39,6 +40,18 @@ WAYLAND_REFUSAL_MESSAGE = (
 )
 
 
+def sanitize_for_log(text: str) -> str:
+    """Sanitize a string for safe logging.
+
+    Neutralizes newlines, control chars, and ANSI sequences.
+    """
+    # Remove ANSI escape sequences
+    cleaned = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", str(text))
+    # Neutralize newlines, tabs, and non-printable control characters
+    cleaned = re.sub(r"[\r\n\x00-\x1f]", " ", cleaned)
+    return cleaned.strip()
+
+
 def check_wayland_session(env: dict[str, str] | None = None) -> bool:
     """Detect if running under a Wayland session.
 
@@ -52,9 +65,7 @@ def check_wayland_session(env: dict[str, str] | None = None) -> bool:
         session_type = env.get("XDG_SESSION_TYPE", "")
         wayland_disp = env.get("WAYLAND_DISPLAY", "")
 
-    if session_type.strip().lower() == "wayland":
-        return True
-    return bool(not session_type.strip() and wayland_disp.strip())
+    return bool(session_type.strip().lower() == "wayland" or wayland_disp.strip())
 
 
 
@@ -204,7 +215,31 @@ class DaemonService:
 
     def setup_logging(self, console: bool = False) -> logging.Logger:
         """Configure rotating log file and optional console logging."""
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            os.chmod(self.state_dir, 0o700)
+        except OSError:
+            pass
+
+        self.log_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            os.chmod(self.log_path.parent, 0o700)
+        except OSError:
+            pass
+
+        # Ensure log file exists with 0o600 permissions
+        if not self.log_path.exists():
+            try:
+                fd = os.open(self.log_path, os.O_CREAT | os.O_WRONLY, 0o600)
+                os.close(fd)
+            except OSError:
+                pass
+        else:
+            try:
+                os.chmod(self.log_path, 0o600)
+            except OSError:
+                pass
+
         logger = logging.getLogger("smol.daemon")
         logger.setLevel(logging.INFO)
 
@@ -411,18 +446,21 @@ class DaemonService:
             donut.shrink_started.connect(
                 lambda target: logger.info(
                     "Shrink job started for '%s' (target=%s bytes)",
-                    donut.file_name,
+                    sanitize_for_log(donut.file_name),
                     target,
                 )
             )
             donut.shrink_finished.connect(
                 lambda results: logger.info(
-                    "Shrink job finished: %s", donut.result_message
+                    "Shrink job finished: %s",
+                    sanitize_for_log(donut.result_message or ""),
                 )
             )
             donut.shrink_failed.connect(
                 lambda err, retry: logger.info(
-                    "Shrink job failed: %s (retry_target=%s)", err, retry
+                    "Shrink job failed: %s (retry_target=%s)",
+                    sanitize_for_log(err),
+                    retry,
                 )
             )
 

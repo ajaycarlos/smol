@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,46 @@ from typing import Protocol
 
 from smol.config import DEFAULT_CONFIG, load_config
 from smol.core.size import format_size
+
+
+def _atomic_write_text(path: Path, content: str, mode: int | None = None) -> None:
+    """Write text atomically to path using an unpredictable temporary file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=path.parent, encoding="utf-8", delete=False
+        ) as tf:
+            tf.write(content)
+            temp_path = Path(tf.name)
+        if mode is not None:
+            os.chmod(temp_path, mode)
+        temp_path.replace(path)
+        temp_path = None
+    finally:
+        if temp_path is not None and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+
+def _atomic_write_xml(path: Path, tree: ET.ElementTree) -> None:
+    """Write XML atomically to path using an unpredictable temporary file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as tf:
+            tree.write(tf, encoding="utf-8", xml_declaration=True)
+            temp_path = Path(tf.name)
+        temp_path.replace(path)
+        temp_path = None
+    finally:
+        if temp_path is not None and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 def get_integration_sizes(
@@ -123,12 +164,13 @@ class NemoIntegrator:
             action_uuids.append(filename)
 
             # Generate nemo_action content
+            bin_cmd = f'"{self.smol_bin}"' if " " in self.smol_bin else self.smol_bin
             content = (
                 "[Nemo Action]\n"
                 "Active=true\n"
                 f"Name={label}\n"
                 f"Comment=Shrink file to at most {label} with smol\n"
-                f"Exec={self.smol_bin} shrink --notify --max {size_arg} -- %F\n"
+                f"Exec={bin_cmd} shrink --notify --max {size_arg} -- %F\n"
                 "Icon-Name=image-x-generic\n"
                 "Selection=notnone\n"
                 "Extensions=jpg;jpeg;png;webp;heic;avif;pdf;\n"
@@ -136,9 +178,7 @@ class NemoIntegrator:
             )
 
             # Atomic write
-            tmp_path = action_path.with_suffix(".tmp")
-            tmp_path.write_text(content, encoding="utf-8")
-            tmp_path.replace(action_path)
+            _atomic_write_text(action_path, content)
             installed_files.append(action_path)
 
         # Update or create actions-tree.json for the 'Shrink to…' submenu
@@ -176,9 +216,7 @@ class NemoIntegrator:
 
         tree_data["toplevel"] = toplevel
 
-        tmp_tree = self.tree_file.with_suffix(".tmp")
-        tmp_tree.write_text(json.dumps(tree_data, indent=2), encoding="utf-8")
-        tmp_tree.replace(self.tree_file)
+        _atomic_write_text(self.tree_file, json.dumps(tree_data, indent=2))
         installed_files.append(self.tree_file)
 
         msg = (
@@ -222,11 +260,7 @@ class NemoIntegrator:
                         removed_files.append(self.tree_file)
                     else:
                         loaded["toplevel"] = toplevel
-                        tmp_tree = self.tree_file.with_suffix(".tmp")
-                        tmp_tree.write_text(
-                            json.dumps(loaded, indent=2), encoding="utf-8"
-                        )
-                        tmp_tree.replace(self.tree_file)
+                        _atomic_write_text(self.tree_file, json.dumps(loaded, indent=2))
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -313,8 +347,7 @@ class NautilusIntegrator:
                 "#!/bin/sh\n"
                 f'exec "{self.smol_bin}" shrink --notify --max {size_arg} -- "$@"\n'
             )
-            script_path.write_text(content, encoding="utf-8")
-            script_path.chmod(0o755)
+            _atomic_write_text(script_path, content, mode=0o755)
             installed_files.append(script_path)
 
         return IntegrationResult(
@@ -404,19 +437,20 @@ class DolphinIntegrator:
             "",
         ]
 
+        bin_cmd = f'"{self.smol_bin}"' if " " in self.smol_bin else self.smol_bin
         for size_arg, label, slug in self.sizes:
             lines.extend(
                 [
                     f"[Desktop Action shrink_{slug}]",
                     f"Name={label}",
                     "Icon=image-x-generic",
-                    f'Exec="{self.smol_bin}" shrink --notify --max {size_arg} -- %F',
+                    f"Exec={bin_cmd} shrink --notify --max {size_arg} -- %F",
                     "",
                 ]
             )
 
         content = "\n".join(lines)
-        self.desktop_file.write_text(content, encoding="utf-8")
+        _atomic_write_text(self.desktop_file, content)
 
         return IntegrationResult(
             ok=True,
@@ -477,6 +511,11 @@ class ThunarIntegrator:
                 tree = ET.parse(self.uca_file)
                 root = tree.getroot()
             except (ET.ParseError, OSError):
+                bak = self.uca_file.with_suffix(".xml.bak")
+                try:
+                    shutil.copy2(self.uca_file, bak)
+                except OSError:
+                    pass
                 root = ET.Element("actions")
                 tree = ET.ElementTree(root)
         else:
@@ -493,6 +532,7 @@ class ThunarIntegrator:
             ):
                 root.remove(action)
 
+        bin_cmd = f'"{self.smol_bin}"' if " " in self.smol_bin else self.smol_bin
         # Add actions for each size
         for size_arg, label, slug in self.sizes:
             action = ET.SubElement(root, "action")
@@ -502,7 +542,7 @@ class ThunarIntegrator:
             ET.SubElement(action, "unique-id").text = f"smol-{slug}"
             ET.SubElement(
                 action, "command"
-            ).text = f'"{self.smol_bin}" shrink --notify --max {size_arg} -- %F'
+            ).text = f"{bin_cmd} shrink --notify --max {size_arg} -- %F"
             ET.SubElement(
                 action, "description"
             ).text = f"Shrink file to at most {label}"
@@ -514,7 +554,7 @@ class ThunarIntegrator:
             ET.SubElement(action, "image-files")
             ET.SubElement(action, "other-files")
 
-        tree.write(self.uca_file, encoding="utf-8", xml_declaration=True)
+        _atomic_write_xml(self.uca_file, tree)
 
         return IntegrationResult(
             ok=True,
@@ -539,7 +579,7 @@ class ThunarIntegrator:
                         root.remove(action)
                         changed = True
                 if changed:
-                    tree.write(self.uca_file, encoding="utf-8", xml_declaration=True)
+                    _atomic_write_xml(self.uca_file, tree)
                     removed_files.append(self.uca_file)
             except (ET.ParseError, OSError):
                 pass

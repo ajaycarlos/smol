@@ -1,7 +1,6 @@
-"""XDG autostart desktop entry integration for smol daemon."""
-
 import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,7 +53,8 @@ class AutostartIntegrator:
         self.desktop_file = self.autostart_dir / "smol.desktop"
 
     def _generate_desktop_content(self) -> str:
-        exec_cmd = f"{self.smol_bin} daemon start"
+        bin_cmd = f'"{self.smol_bin}"' if " " in self.smol_bin else self.smol_bin
+        exec_cmd = f"{bin_cmd} daemon start"
         return (
             "[Desktop Entry]\n"
             "Type=Application\n"
@@ -68,14 +68,20 @@ class AutostartIntegrator:
         )
 
     def install(self) -> AutostartResult:
-        """Install or update the XDG autostart entry."""
+        """Install or update the XDG autostart entry atomically."""
+        temp_file: Path | None = None
         try:
             self.autostart_dir.mkdir(parents=True, exist_ok=True)
             content = self._generate_desktop_content()
 
-            tmp_file = self.desktop_file.with_suffix(".tmp")
-            tmp_file.write_text(content, encoding="utf-8")
-            tmp_file.replace(self.desktop_file)
+            with tempfile.NamedTemporaryFile(
+                "w", dir=self.autostart_dir, encoding="utf-8", delete=False
+            ) as tf:
+                tf.write(content)
+                temp_file = Path(tf.name)
+
+            temp_file.replace(self.desktop_file)
+            temp_file = None
 
             return AutostartResult(
                 ok=True,
@@ -87,6 +93,12 @@ class AutostartIntegrator:
                 ok=False,
                 message=f"Failed to install autostart entry: {exc}",
             )
+        finally:
+            if temp_file is not None and temp_file.exists():
+                try:
+                    temp_file.unlink()
+                except OSError:
+                    pass
 
     def uninstall(self) -> AutostartResult:
         """Remove the XDG autostart entry."""
