@@ -527,17 +527,39 @@ class DaemonService:
             print(f"smol daemon is already running (PID {pid}).")
             return 1
 
-        cmd = [
-            sys.executable,
-            "-m",
-            "smol.cli",
-            "daemon",
-            "run",
-            "--state-dir",
-            str(self.state_dir),
-            "--config",
-            str(self.config_path),
-        ]
+        appimage = os.environ.get("APPIMAGE")
+        if appimage and Path(appimage).is_file():
+            cmd = [
+                appimage,
+                "daemon",
+                "run",
+                "--state-dir",
+                str(self.state_dir),
+                "--config",
+                str(self.config_path),
+            ]
+        elif getattr(sys, "frozen", False):
+            cmd = [
+                sys.executable,
+                "daemon",
+                "run",
+                "--state-dir",
+                str(self.state_dir),
+                "--config",
+                str(self.config_path),
+            ]
+        else:
+            cmd = [
+                sys.executable,
+                "-m",
+                "smol.cli",
+                "daemon",
+                "run",
+                "--state-dir",
+                str(self.state_dir),
+                "--config",
+                str(self.config_path),
+            ]
 
         subprocess.Popen(
             cmd,

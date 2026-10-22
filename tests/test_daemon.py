@@ -252,3 +252,49 @@ def test_cli_daemon_commands(
         assert "not running" in out.lower()
     finally:
         DaemonService(state_dir=state_dir, config_path=config_file).stop()
+
+
+def test_daemon_start_command_frozen_and_appimage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Daemon start detects frozen binary and APPIMAGE to avoid '-m smol.cli'."""
+    service = DaemonService(state_dir=tmp_path / "state", config_path=tmp_path / "config.toml")
+    spawned_cmds = []
+
+    def fake_popen(cmd, **kwargs):
+        spawned_cmds.append(cmd)
+        return None
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    # Return (False, None) on initial check, then (True, 1234) on startup poll
+    status_calls = []
+    def fake_status():
+        if len(status_calls) % 2 == 0:
+            status_calls.append(False)
+            return (False, None)
+        else:
+            status_calls.append(True)
+            return (True, 1234)
+    monkeypatch.setattr(service, "status", fake_status)
+
+    # Case 1: Standard python
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    service.start()
+    assert spawned_cmds[-1][:3] == [sys.executable, "-m", "smol.cli"]
+
+    # Case 2: PyInstaller frozen
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/opt/smol/smol")
+    service.start()
+    assert spawned_cmds[-1][:2] == ["/opt/smol/smol", "daemon"]
+    assert "-m" not in spawned_cmds[-1]
+
+    # Case 3: AppImage
+    appimage_path = tmp_path / "test.AppImage"
+    appimage_path.touch()
+    monkeypatch.setenv("APPIMAGE", str(appimage_path))
+    service.start()
+    assert spawned_cmds[-1][:2] == [str(appimage_path), "daemon"]
+    assert "-m" not in spawned_cmds[-1]
+
