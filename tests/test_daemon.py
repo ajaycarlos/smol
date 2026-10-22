@@ -258,12 +258,14 @@ def test_daemon_start_command_frozen_and_appimage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Daemon start detects frozen binary and APPIMAGE to avoid '-m smol.cli'."""
-    service = DaemonService(state_dir=tmp_path / "state", config_path=tmp_path / "config.toml")
+    service = DaemonService(
+        state_dir=tmp_path / "state",
+        config_path=tmp_path / "config.toml",
+    )
     spawned_cmds = []
 
     def fake_popen(cmd, **kwargs):
         spawned_cmds.append(cmd)
-        return None
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     # Return (False, None) on initial check, then (True, 1234) on startup poll

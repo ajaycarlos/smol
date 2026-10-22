@@ -1248,6 +1248,12 @@ class DonutWindow(QWidget):
             self._classification_worker.cancel()
             self._classification_worker.wait(300)
         super().closeEvent(event)
+        self.dismissed.emit("closed")
+
+    def hideEvent(self, event: object) -> None:
+        """Emit dismissed signal when overlay is hidden."""
+        super().hideEvent(event)
+        self.dismissed.emit("hidden")
 
     def __del__(self) -> None:
         try:

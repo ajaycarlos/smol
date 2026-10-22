@@ -182,6 +182,27 @@ class KeyHoldTracker:
             if self.target_key == "Ctrl+Alt":
                 events.append("PRESS Ctrl+Alt")
 
+        # Plain Ctrl candidate
+        if raw_key in ("Control_L", "Control_R") and "Ctrl" not in self.pressed_at:
+            self.pressed_at["Ctrl"] = now
+            if self.target_key in ("Ctrl", "Control"):
+                events.append(f"PRESS {self.target_key}")
+
+        # Plain Alt candidate
+        if (
+            raw_key in ("Alt_L", "Alt_R", "ISO_Level3_Shift", "Mode_switch")
+            and "Alt" not in self.pressed_at
+        ):
+            self.pressed_at["Alt"] = now
+            if self.target_key in ("Alt", "Alt_L"):
+                events.append(f"PRESS {self.target_key}")
+
+        # Plain Shift candidate
+        if raw_key in ("Shift_L", "Shift_R") and "Shift" not in self.pressed_at:
+            self.pressed_at["Shift"] = now
+            if self.target_key in ("Shift", "Shift_L"):
+                events.append(f"PRESS {self.target_key}")
+
         return events
 
     def on_raw_key_up(self, raw_key: str, timestamp: float | None = None) -> list[str]:
@@ -231,6 +252,34 @@ class KeyHoldTracker:
                 if press_t is not None and self.target_key == "Ctrl+Alt":
                     held_ms = int((now - press_t) * 1000.0)
                     events.append(f"RELEASE Ctrl+Alt held={held_ms}ms")
+
+        # Plain Ctrl candidate
+        if raw_key in ("Control_L", "Control_R") and not any(
+            k in self.raw_keys_down for k in ("Control_L", "Control_R")
+        ):
+            press_t = self.pressed_at.pop("Ctrl", None)
+            if press_t is not None and self.target_key in ("Ctrl", "Control"):
+                held_ms = int((now - press_t) * 1000.0)
+                events.append(f"RELEASE {self.target_key} held={held_ms}ms")
+
+        # Plain Alt candidate
+        if raw_key in ("Alt_L", "Alt_R", "ISO_Level3_Shift", "Mode_switch") and not any(
+            k in self.raw_keys_down
+            for k in ("Alt_L", "Alt_R", "ISO_Level3_Shift", "Mode_switch")
+        ):
+            press_t = self.pressed_at.pop("Alt", None)
+            if press_t is not None and self.target_key in ("Alt", "Alt_L"):
+                held_ms = int((now - press_t) * 1000.0)
+                events.append(f"RELEASE {self.target_key} held={held_ms}ms")
+
+        # Plain Shift candidate
+        if raw_key in ("Shift_L", "Shift_R") and not any(
+            k in self.raw_keys_down for k in ("Shift_L", "Shift_R")
+        ):
+            press_t = self.pressed_at.pop("Shift", None)
+            if press_t is not None and self.target_key in ("Shift", "Shift_L"):
+                held_ms = int((now - press_t) * 1000.0)
+                events.append(f"RELEASE {self.target_key} held={held_ms}ms")
 
         return events
 
@@ -327,7 +376,7 @@ class ListenerCoordinator:
         """Handle candidate trigger key release event."""
         self.log(f"Trigger key '{key_name}' released after {int(held_ms)}ms.")
         self.drag_tracker.reset()
-        if self.is_donut_visible and not self.has_active_drop:
+        if not self.has_active_drop:
             self.log("Trigger key released without drop; hiding donut overlay.")
             self.is_donut_visible = False
             if self.on_dismiss is not None:
@@ -338,17 +387,16 @@ class ListenerCoordinator:
         self.log(
             f"Drag started at x={x}, y={y} while trigger key '{self.target_key}' held."
         )
-        if not self.is_donut_visible:
-            self.is_donut_visible = True
-            self.has_active_drop = False
-            self.log(f"Summoning donut at cursor x={x}, y={y} ({self.mode.value}).")
-            if self.on_summon is not None:
-                self.on_summon(x, y)
+        self.is_donut_visible = True
+        self.has_active_drop = False
+        self.log(f"Summoning donut at cursor x={x}, y={y} ({self.mode.value}).")
+        if self.on_summon is not None:
+            self.on_summon(x, y)
 
     def on_drag_cancelled(self) -> None:
         """Handle drag cancellation midway."""
         self.drag_tracker.reset()
-        if self.is_donut_visible and not self.has_active_drop:
+        if not self.has_active_drop:
             self.log("Drag cancelled midway; hiding donut overlay.")
             self.is_donut_visible = False
             if self.on_dismiss is not None:
@@ -527,6 +575,9 @@ class X11EventListener(QThread):
                         self.drag_cancelled.emit()
                     time.sleep(self.poll_interval)
                 else:
+                    if self.drag_tracker.is_dragging:
+                        self.drag_tracker.reset()
+                        self.drag_cancelled.emit()
                     # Adaptive interval: 80 ms if recent key change (<0.5s),
                     # 100 ms when quiescent. Detection delay is <=100 ms,
                     # keeping total summon time well under 150 ms target.

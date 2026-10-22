@@ -425,6 +425,7 @@ class DaemonService:
             def on_dismiss(reason: str) -> None:
                 donut.hide()
                 donut.reset_state()
+                coordinator.reset()
                 logger.info("Donut overlay dismissed (reason=%s)", reason)
 
             coordinator = ListenerCoordinator(
@@ -436,9 +437,10 @@ class DaemonService:
             )
 
             def handle_donut_dismissed(reason: str) -> None:
+                coordinator.reset()
                 if reason == "esc":
                     coordinator.on_esc_pressed()
-                else:
+                elif reason == "outside":
                     coordinator.on_click_outside()
 
             donut.drop_received.connect(coordinator.on_drop_received)
@@ -450,19 +452,24 @@ class DaemonService:
                     target,
                 )
             )
-            donut.shrink_finished.connect(
-                lambda results: logger.info(
+
+            def handle_shrink_finished(results: Any) -> None:
+                coordinator.has_active_drop = False
+                logger.info(
                     "Shrink job finished: %s",
                     sanitize_for_log(donut.result_message or ""),
                 )
-            )
-            donut.shrink_failed.connect(
-                lambda err, retry: logger.info(
+
+            def handle_shrink_failed(err: str, retry: Any) -> None:
+                coordinator.has_active_drop = False
+                logger.info(
                     "Shrink job failed: %s (retry_target=%s)",
                     sanitize_for_log(err),
                     retry,
                 )
-            )
+
+            donut.shrink_finished.connect(handle_shrink_finished)
+            donut.shrink_failed.connect(handle_shrink_failed)
 
             if session_type == "x11":
                 listener = X11EventListener(
@@ -497,6 +504,22 @@ class DaemonService:
                 )
             )
             config_watcher.start(1000)
+
+            # Overlay safety watchdog timer: guarantees overlay never gets stuck
+            # if trigger key was released without active drop processing
+            def check_overlay_safety() -> None:
+                if (
+                    donut.isVisible()
+                    and not coordinator.has_active_drop
+                    and listener is not None
+                    and hasattr(listener, "key_tracker")
+                    and not listener.key_tracker.is_target_pressed()
+                ):
+                    on_dismiss("key_not_held")
+
+            watchdog = QTimer()
+            watchdog.timeout.connect(check_overlay_safety)
+            watchdog.start(50)
 
             if not self._stop_event.is_set():
                 app.exec()

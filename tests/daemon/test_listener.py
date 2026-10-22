@@ -210,3 +210,53 @@ def test_ensure_ungrab_safe() -> None:
     # ensure_ungrab must never raise even if Xlib raises an exception or is absent
     with patch("Xlib.display.Display", side_effect=Exception("X connection failed")):
         ensure_ungrab()  # Must not raise
+
+
+def test_key_hold_tracker_ctrl() -> None:
+    """Verify plain Ctrl trigger key produces PRESS and RELEASE events."""
+    tracker = KeyHoldTracker(target_key="Ctrl")
+
+    events = tracker.on_raw_key_down("Control_L", timestamp=1.0)
+    assert events == ["PRESS Ctrl"]
+    assert tracker.is_target_pressed() is True
+
+    events2 = tracker.on_raw_key_up("Control_L", timestamp=1.2)
+    assert len(events2) == 1
+    assert "RELEASE Ctrl" in events2[0]
+    assert tracker.is_target_pressed() is False
+
+
+def test_listener_coordinator_repeated_drags_after_completion() -> None:
+    """Verify donut can be summoned repeatedly across multiple drag-and-drop jobs."""
+    summon_mock = MagicMock()
+    dismiss_mock = MagicMock()
+
+    coordinator = ListenerCoordinator(
+        mode=SummonMode.PATH_A,
+        target_key="Super",
+        on_summon=summon_mock,
+        on_dismiss=dismiss_mock,
+    )
+
+    # First drag & drop
+    coordinator.on_drag_start(100, 100)
+    assert summon_mock.call_count == 1
+    coordinator.on_drop_received(["file1.jpg"])
+    assert coordinator.has_active_drop is True
+
+    # Job finishes and window closes -> reset coordinator
+    coordinator.reset()
+    assert coordinator.has_active_drop is False
+    assert coordinator.is_donut_visible is False
+
+    # Second drag & drop
+    coordinator.on_drag_start(200, 200)
+    assert summon_mock.call_count == 2
+    coordinator.on_drop_received(["file2.jpg"])
+
+    coordinator.reset()
+
+    # Third drag & drop
+    coordinator.on_drag_start(300, 300)
+    assert summon_mock.call_count == 3
+
