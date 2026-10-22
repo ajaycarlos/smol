@@ -65,9 +65,9 @@ export PATH="$APPDIR/usr/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
 export XDG_DATA_DIRS="$APPDIR/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 
 if [ $# -eq 0 ]; then
-    # When launched from GUI without terminal, default to donut
+    # When launched from GUI without terminal, default to settings window
     if [ ! -t 1 ]; then
-        exec "$APPDIR/usr/bin/smol" donut
+        exec "$APPDIR/usr/bin/smol" settings
     fi
 fi
 exec "$APPDIR/usr/bin/smol" "$@"

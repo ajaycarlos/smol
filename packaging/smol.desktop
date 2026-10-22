@@ -2,7 +2,7 @@
 Type=Application
 Name=smol
 Comment=Shrink any file to at most a chosen size
-Exec=smol donut
+Exec=smol settings
 Icon=smol
 Terminal=false
 Categories=Utility;Graphics;
