@@ -264,3 +264,51 @@ def test_disabled_segment_does_not_grow(qapp, sample_image: Path) -> None:
             assert seg.hover_scale == 1.0
     finally:
         window.close()
+
+
+def test_close_animation_properties_and_easing(qapp, sample_image: Path) -> None:
+    """Close animation uses 120 ms InCubic easing to scale down to centre."""
+    window = DonutWindow(files=[sample_image], reduce_motion=False)
+    try:
+        window.show()
+        window.open_scale = 1.0
+
+        done_called = False
+
+        def on_done() -> None:
+            nonlocal done_called
+            done_called = True
+
+        window.start_close_animation(on_finished=on_done)
+        assert window._close_anim is not None
+        assert window._close_anim.duration() == 120
+        assert window._close_anim.easingCurve().type() == QEasingCurve.Type.InCubic
+        assert window._close_anim.startValue() == 1.0
+        assert window._close_anim.endValue() == 0.0
+
+        # Fast forward
+        window._close_anim.setCurrentTime(120)
+        assert done_called is True
+        assert not window.isVisible()
+    finally:
+        window.close()
+
+
+def test_close_animation_reduce_motion(qapp, sample_image: Path) -> None:
+    """With reduce_motion=True, window hides immediately without close animation."""
+    window = DonutWindow(files=[sample_image], reduce_motion=True)
+    try:
+        window.show()
+        done_called = False
+
+        def on_done() -> None:
+            nonlocal done_called
+            done_called = True
+
+        window.start_close_animation(on_finished=on_done)
+        assert done_called is True
+        assert not window.isVisible()
+        assert window._close_anim is None or not window._close_anim.state()
+    finally:
+        window.close()
+

@@ -179,3 +179,34 @@ def test_key_released_early_resets_state() -> None:
     assert coordinator.is_donut_visible is False
     assert "key_release" in dismiss_reasons
     assert coordinator.drag_tracker.is_dragging is False
+
+
+def test_drop_received_protects_against_key_release_and_cancel(tmp_path: Path) -> None:
+    """Verify that after a drop, releasing the trigger key does not dismiss."""
+    dismiss_reasons: list[str] = []
+    coordinator = ListenerCoordinator(
+        mode=SummonMode.PATH_A,
+        target_key="Super",
+        on_dismiss=lambda r: dismiss_reasons.append(r),
+    )
+
+    coordinator.on_key_down("Super")
+    coordinator.on_drag_start(300, 400)
+    assert coordinator.is_donut_visible is True
+
+    # User drops file onto donut
+    sample_file = _create_image(tmp_path / "drop_test.jpg")
+    coordinator.on_drop_received([sample_file])
+    assert coordinator.has_active_drop is True
+
+    # User releases trigger key after drop
+    coordinator.on_key_up("Super", held_ms=500.0)
+    # Must NOT dismiss!
+    assert len(dismiss_reasons) == 0
+    assert coordinator.is_donut_visible is True
+
+    # Pointer drag cancellation signal (if any) must also NOT dismiss!
+    coordinator.on_drag_cancelled()
+    assert len(dismiss_reasons) == 0
+    assert coordinator.is_donut_visible is True
+

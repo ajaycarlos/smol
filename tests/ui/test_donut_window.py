@@ -722,3 +722,50 @@ def test_donut_12kb_file_classic_mode_displays_already_small(
     win.close()
 
 
+def test_center_hole_drag_hover_and_drop_cancels(qapp, sample_file_100kb):
+    """Dragging over center hole highlights cancel target; dropping cancels upload."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDragMoveEvent, QDropEvent
+
+    win = DonutWindow([sample_file_100kb], reduce_motion=True)
+    win.show()
+
+    dismiss_reasons = []
+    win.dismissed.connect(lambda r: dismiss_reasons.append(r))
+
+    center_pt = win.rect().center()
+    center_pos = QPointF(center_pt.x(), center_pt.y())
+
+    # Emulate drag move into center hole
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(sample_file_100kb))])
+    drag_move = QDragMoveEvent(
+        center_pos,
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    win.dragMoveEvent(drag_move)
+    assert win._is_center_cancel_hovered is True
+
+    # Emulate drop in center hole
+    drop_ev = QDropEvent(
+        center_pos,
+        Qt.DropAction.CopyAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    win.dropEvent(drop_ev)
+
+    assert win._is_center_cancel_hovered is False
+    assert "centre_cancel" in dismiss_reasons
+    # Compression was cancelled: no worker running, state stays idle
+    assert win._shrink_worker is None
+    assert len(win.job_queue) == 0
+    assert not win.isVisible()
+    win.close()
+
+
+

@@ -423,10 +423,29 @@ class DaemonService:
                 )
 
             def on_dismiss(reason: str) -> None:
-                donut.hide()
-                donut.reset_state()
+                if donut.state in ("working", "success") and reason not in (
+                    "esc",
+                    "centre_cancel",
+                ):
+                    logger.info(
+                        "Ignoring dismiss (%s) because donut is in '%s' state",
+                        reason,
+                        donut.state,
+                    )
+                    return
+
                 coordinator.reset()
-                logger.info("Donut overlay dismissed (reason=%s)", reason)
+                if donut.isVisible():
+                    donut.dismiss_animated(
+                        reason,
+                        on_finished=lambda: (
+                            donut.reset_state(),
+                            logger.info("Donut overlay dismissed (reason=%s)", reason),
+                        ),
+                    )
+                else:
+                    donut.reset_state()
+                    logger.info("Donut overlay dismissed (reason=%s)", reason)
 
             coordinator = ListenerCoordinator(
                 mode=summon_mode,
@@ -443,7 +462,12 @@ class DaemonService:
                 elif reason == "outside":
                     coordinator.on_click_outside()
 
-            donut.drop_received.connect(coordinator.on_drop_received)
+            def handle_drop_received(files: list[Any]) -> None:
+                coordinator.on_drop_received(files)
+                if listener is not None and hasattr(listener, "drag_tracker"):
+                    listener.drag_tracker.reset()
+
+            donut.drop_received.connect(handle_drop_received)
             donut.dismissed.connect(handle_donut_dismissed)
             donut.shrink_started.connect(
                 lambda target: logger.info(
@@ -510,6 +534,7 @@ class DaemonService:
             def check_overlay_safety() -> None:
                 if (
                     donut.isVisible()
+                    and donut.state not in ("working", "success")
                     and not coordinator.has_active_drop
                     and listener is not None
                     and hasattr(listener, "key_tracker")

@@ -543,7 +543,13 @@ Final QA pass complete (all checks green, 0 blockers); ready for v1.0 release.
   - Optimized daemon idle CPU: switched X11 listener to adaptive interval (80 ms on activity, 100 ms when quiescent, 1000 ms heartbeat), reducing 30s idle CPU from 0.67% to 0.47% with warm donut latency of 25.21 ms (< 150 ms target).
   - Fixed all 9 pytest warnings: wrapped expected invalid config inputs in `pytest.warns(UserWarning)` in `tests/core/test_config.py` and `tests/test_security_audit.py`. Full test suite now runs with 0 warnings.
   - Added "Already small" center display in `DonutWindow` for files smaller than all ladder presets (e.g. 12 KB in Classic mode).
-  - VERIFY: 458 passed tests in 48.4s; 0 warnings; ruff clean; 0 deleted or weakened tests.
+  - Fixed 3 UX issues in drag-and-drop workflow:
+    1. Active compression protected from key release: `on_dismiss` guards `working` and `success` states from dismissal; `listener.drag_tracker` resets on drop to prevent false `drag_cancelled` emissions upon mouse release.
+    2. Center hole cancel drop target: center text updated to "Drop on size" / "Center cancels" when idle; hovering center hole during drag illuminates with soft crimson wash, white ✕ badge, and "Drop to cancel"; dropping into center cancels immediately without creating files or spawning workers.
+    3. Donut hiding animation: implemented 120 ms `InCubic` scale-down and opacity fade in `start_close_animation()` / `dismiss_animated()`, wrapping entire donut surface (segments, specular rims, and center card) with smooth exit motion.
+  - Rebuilt standalone packages: `smol-0.9.0-x86_64.AppImage` (66 MB) and `smol_0.9.0_amd64.deb` (55 MB).
+  - Added regression test cases in `tests/ui/test_donut_animation.py`, `tests/ui/test_donut_window.py`, and `tests/daemon/test_drop_robustness.py`.
+  - VERIFY: 465 passed tests in 49.1s; 0 warnings; ruff clean; 0 deleted or weakened tests.
 
 ## Next
 - Tag and publish v1.0 release.

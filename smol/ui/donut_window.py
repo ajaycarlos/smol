@@ -419,6 +419,8 @@ class DonutWindow(QWidget):
 
         self._open_scale: float = 1.0
         self._open_anim: QPropertyAnimation | None = None
+        self._close_anim: QPropertyAnimation | None = None
+        self._is_center_cancel_hovered: bool = False
         self._prediction_opacity: float = 0.0
         self._prediction_anim: QPropertyAnimation | None = None
 
@@ -564,8 +566,8 @@ class DonutWindow(QWidget):
                 continue
 
         if not self.file_paths:
-            self.file_name = "Drop files here"
-            self.file_size_text = ""
+            self.file_name = "Drop on size"
+            self.file_size_text = "Center cancels"
             self.thumbnail_pixmap = None
         elif len(self.file_paths) == 1:
             first = self.file_paths[0]
@@ -863,6 +865,9 @@ class DonutWindow(QWidget):
 
     def start_open_animation(self) -> None:
         """Start 120 ms OutCubic scale from centre (instant if reduce_motion)."""
+        if self._close_anim is not None and self._close_anim.state():
+            self._close_anim.stop()
+
         if self.reduce_motion:
             self._open_scale = 1.0
             if self._open_anim is not None and self._open_anim.state():
@@ -881,6 +886,48 @@ class DonutWindow(QWidget):
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._open_anim = anim
         anim.start()
+
+    def start_close_animation(
+        self, on_finished: Callable[[], None] | None = None
+    ) -> None:
+        """Start 120 ms InCubic scale down to centre and fade out."""
+        if self._open_anim is not None and self._open_anim.state():
+            self._open_anim.stop()
+
+        if self.reduce_motion or not self.isVisible():
+            self._open_scale = 0.0
+            if self._close_anim is not None and self._close_anim.state():
+                self._close_anim.stop()
+            self.hide()
+            if on_finished is not None:
+                on_finished()
+            return
+
+        if self._close_anim is not None and self._close_anim.state():
+            return
+
+        anim = QPropertyAnimation(self, b"open_scale", self)
+        anim.setDuration(120)
+        anim.setStartValue(self._open_scale)
+        anim.setEndValue(0.0)
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+
+        def _on_done() -> None:
+            self.hide()
+            self._open_scale = 1.0
+            if on_finished is not None:
+                on_finished()
+
+        anim.finished.connect(_on_done)
+        self._close_anim = anim
+        anim.start()
+
+    def dismiss_animated(
+        self, reason: str, on_finished: Callable[[], None] | None = None
+    ) -> None:
+        """Emit dismissed signal and play smooth close animation."""
+        self.dismissed.emit(reason)
+        self.start_close_animation(on_finished)
 
     def _segment_at(self, dx: float, dy: float) -> int | None:
         """Find segment index at (dx, dy), accounting for 6% hover expansion."""
@@ -1017,6 +1064,10 @@ class DonutWindow(QWidget):
             self._shrink_worker = None
         if self._open_anim is not None and self._open_anim.state():
             self._open_anim.stop()
+        if self._close_anim is not None and self._close_anim.state():
+            self._close_anim.stop()
+        self._open_scale = 1.0
+        self._is_center_cancel_hovered = False
         if self._prediction_anim is not None and self._prediction_anim.state():
             self._prediction_anim.stop()
         if self._anim_fade_others is not None and self._anim_fade_others.state():
@@ -1378,7 +1429,13 @@ class DonutWindow(QWidget):
         pos = event.position() if hasattr(event, "position") else event.pos()
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
+        r = math.hypot(dx, dy)
         idx = self._segment_at(dx, dy)
+
+        is_center = r <= self.geometry_calc.inner_radius
+        if is_center != self._is_center_cancel_hovered:
+            self._is_center_cancel_hovered = is_center
+            self.update()
 
         if self.drag_classify_state == "none_supported":
             if idx is not None:
@@ -1389,7 +1446,10 @@ class DonutWindow(QWidget):
             return
 
         self.unsetCursor()
-        if idx != self._hovered_idx:
+        if is_center:
+            if self._hovered_idx is not None:
+                self._set_hovered_segment(None)
+        elif idx != self._hovered_idx:
             self._set_hovered_segment(idx)
         event.acceptProposedAction()
 
@@ -1397,6 +1457,9 @@ class DonutWindow(QWidget):
         """Clear drag hover state and restore default classification state."""
         self.unsetCursor()
         self._set_hovered_segment(None)
+        if self._is_center_cancel_hovered:
+            self._is_center_cancel_hovered = False
+            self.update()
         if self.state != "working":
             self.drag_classify_state = None
             self.center_classify_message = None
@@ -1406,14 +1469,24 @@ class DonutWindow(QWidget):
 
     def dropEvent(self, event: QDropEvent) -> None:
         """Handle file drops onto a donut segment with pre-drop filtering."""
-        if self.drag_classify_state == "none_supported":
-            event.ignore()
-            return
-
         center = self.rect().center()
         pos = event.position() if hasattr(event, "position") else event.pos()
         dx = pos.x() - center.x()
         dy = pos.y() - center.y()
+        r = math.hypot(dx, dy)
+
+        # Dropping into center hole cancels upload!
+        if r <= self.geometry_calc.inner_radius:
+            self._is_center_cancel_hovered = False
+            self.update()
+            event.acceptProposedAction()
+            self.dismiss_animated("centre_cancel")
+            return
+
+        if self.drag_classify_state == "none_supported":
+            event.ignore()
+            return
+
         idx = self._segment_at(dx, dy)
 
         dropped_files = self._parse_drop_uris(event.mimeData())
@@ -1852,6 +1925,11 @@ class DonutWindow(QWidget):
             return
 
         # Idle state
+        if r <= self.geometry_calc.inner_radius:
+            self.dismiss_animated("centre_cancel")
+            event.accept()
+            return
+
         idx = self._segment_at(dx, dy)
         if idx is None:
             if r > self.geometry_calc.outer_radius * 1.06:
@@ -1893,13 +1971,14 @@ class DonutWindow(QWidget):
         outer_rect = QRectF(center_x - r_out, center_y - r_out, r_out * 2, r_out * 2)
         inner_rect = QRectF(center_x - r_in, center_y - r_in, r_in * 2, r_in * 2)
 
-        # Open animation fan-out scale from centre
+        # Open/close animation fan-out scale and fade from centre
         painter.save()
         if self._open_scale < 1.0:
             scale_val = max(0.001, self._open_scale)
             painter.translate(center_x, center_y)
             painter.scale(scale_val, scale_val)
             painter.translate(-center_x, -center_y)
+            painter.setOpacity(scale_val)
 
         # 1. Ambient outer drop shadow (elevation effect)
         shadow_rect = QRectF(
@@ -2097,8 +2176,6 @@ class DonutWindow(QWidget):
                     QPointF(x2 + cos_rad * 0.5, y2 + sin_rad * 0.5),
                 )
 
-        painter.restore()
-
         # 6. Centre circle: frosted glass treatment
         center_card_r = r_in - 2.0
         card_rect = QRectF(
@@ -2107,6 +2184,87 @@ class DonutWindow(QWidget):
             center_card_r * 2,
             center_card_r * 2,
         )
+
+        if self._is_center_cancel_hovered:
+            # Active cancel drop target highlight: subtle crimson glass wash
+            painter.setBrush(QColor(45, 18, 24, 235))
+            painter.setPen(QPen(QColor(248, 113, 113, 180), 1.8))
+            painter.drawEllipse(card_rect)
+
+            # Circular cancel badge
+            badge_r = 18.0
+            badge_cy = center_y - 14.0
+            badge_rect = QRectF(
+                center_x - badge_r,
+                badge_cy - badge_r,
+                badge_r * 2.0,
+                badge_r * 2.0,
+            )
+            painter.setBrush(QColor(239, 68, 68, 230))
+            painter.setPen(QPen(QColor(254, 202, 202, 220), 1.2))
+            painter.drawEllipse(badge_rect)
+
+            # Crisp white 'X' icon
+            pen_x = QPen(
+                QColor(255, 255, 255, 255),
+                2.5,
+                Qt.PenStyle.SolidLine,
+                Qt.PenCapStyle.RoundCap,
+            )
+            painter.setPen(pen_x)
+            painter.drawLine(
+                QPointF(center_x - 6.0, badge_cy - 6.0),
+                QPointF(center_x + 6.0, badge_cy + 6.0),
+            )
+            painter.drawLine(
+                QPointF(center_x + 6.0, badge_cy - 6.0),
+                QPointF(center_x - 6.0, badge_cy + 6.0),
+            )
+
+            # "Drop to cancel" text
+            font_cancel = QFont()
+            font_cancel.setPointSize(10)
+            font_cancel.setBold(True)
+            painter.setFont(font_cancel)
+            cancel_rect = QRectF(
+                center_x - center_card_r + 6.0,
+                center_y + 9.0,
+                (center_card_r - 6.0) * 2,
+                18.0,
+            )
+            painter.setPen(QColor(0, 0, 0, 180))
+            painter.drawText(
+                cancel_rect.adjusted(0, 1, 0, 1),
+                Qt.AlignmentFlag.AlignCenter,
+                "Drop to cancel",
+            )
+            painter.setPen(QColor(254, 226, 226, 255))
+            painter.drawText(
+                cancel_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                "Drop to cancel",
+            )
+
+            # Subtext "No file created"
+            font_sub = QFont()
+            font_sub.setPointSize(8)
+            font_sub.setWeight(QFont.Weight.DemiBold)
+            painter.setFont(font_sub)
+            sub_rect = QRectF(
+                center_x - center_card_r + 6.0,
+                center_y + 29.0,
+                (center_card_r - 6.0) * 2,
+                16.0,
+            )
+            painter.setPen(QColor(252, 165, 165, 220))
+            painter.drawText(
+                sub_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                "No file created",
+            )
+            painter.restore()
+            painter.end()
+            return
 
         # Centre dark tint overlay
         painter.setBrush(QColor(15, 15, 25, 205))
@@ -2565,6 +2723,7 @@ class DonutWindow(QWidget):
                 painter.drawText(
                     sub_rect, Qt.AlignmentFlag.AlignCenter, "Drop not allowed"
                 )
+                painter.restore()
                 painter.end()
                 return
 
@@ -2694,6 +2853,7 @@ class DonutWindow(QWidget):
                 )
                 painter.setPen(col)
                 painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, elided_msg)
+                painter.restore()
                 painter.end()
                 return
 
@@ -2780,4 +2940,5 @@ class DonutWindow(QWidget):
                 painter.setPen(pred_color)
                 painter.drawText(size_rect, Qt.AlignmentFlag.AlignCenter, active_text)
 
+        painter.restore()
         painter.end()
